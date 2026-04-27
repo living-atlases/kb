@@ -1,0 +1,257 @@
+# Living Atlas KB - Tier 2 Repositories
+# Updated: Weekly (Sundays) at 3:00 AM
+# Priority: HIGH — full LA ecosystem coverage
+# Repos sourced from: la-docker-compose/roles/la-compose/vars/docker-services-desc.yaml
+
+repos:
+  - name: collectory
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/collectory.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+      - "grails-app/controllers/**/*.groovy"
+      - "src/main/resources/**/*.properties"
+      - "grails-app/migrations/**/*.groovy"
+    description: "Biodiversity collections registry"
+
+  - name: biocache-service
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/biocache-service.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+      - "grails-app/controllers/**/*.groovy"
+      - "src/main/resources/**/*.properties"
+    description: "Occurrence records service"
+
+  - name: biocache-hubs
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/biocache-hubs.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+      - "grails-app/views/**/*.gsp"
+    description: "Occurrence hub web app"
+
+  - name: ala-bie-hub
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/ala-bie-hub.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+      - "grails-app/controllers/**/*.groovy"
+    description: "Biodiversity Information Explorer hub"
+
+  - name: bie-index
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/bie-index.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+    description: "BIE species index service"
+
+  - name: image-service
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/image-service.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+      - "grails-app/controllers/**/*.groovy"
+    description: "Image management service"
+
+  - name: specieslist-webapp
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/specieslist-webapp.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+    description: "Species lists web app (legacy)"
+
+  - name: species-lists
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/species-lists.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+    description: "Species lists service (new)"
+
+  - name: spatial-hub
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/spatial-hub.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+    description: "Spatial analysis hub"
+
+  - name: spatial-service
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/spatial-service.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/**/*.groovy"
+    description: "Spatial analysis service"
+
+  - name: regions
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/regions.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+    description: "Regions management service"
+
+  - name: logger-service
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/logger-service.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/**/*.groovy"
+    description: "Event logging service"
+
+  - name: ala-namematching-service
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/ala-namematching-service.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/**/*.java"
+      - "src/**/*.yml"
+    description: "Taxonomic name matching service"
+
+  - name: ala-sensitive-data-service
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/ala-sensitive-data-service.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/**/*.java"
+      - "src/**/*.yml"
+    description: "Sensitive data service"
+
+  - name: dashboard
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/dashboard.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+    description: "LA Dashboard service"
+
+  - name: alerts
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/alerts.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/**/*.groovy"
+    description: "User alerts service"
+
+  - name: doi-service
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/doi-service.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/**/*.groovy"
+    description: "DOI minting service"
+
+  - name: userdetails
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/userdetails.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "grails-app/conf/**/*.groovy"
+    description: "User management service"
+
+  - name: base-branding
+    org: living-atlases
+    url: https://github.com/living-atlases/base-branding.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "**/*.yml"
+    description: "LA base branding and theming"
+
+  # ── GBIF public community repos ───────────────────────────────────────────
+
+  - name: ipt
+    org: gbif
+    url: https://github.com/gbif/ipt.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/main/resources/**/*.properties"
+      - "src/main/webapp/WEB-INF/**/*.xml"
+      - "**/*.yml"
+    description: "GBIF Integrated Publishing Toolkit — DarwinCore data publishing"
+
+  - name: gbif-api
+    org: gbif
+    url: https://github.com/gbif/gbif-api.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/main/java/**/*.java"
+    description: "GBIF public Java API model — shared types/enums used by all GBIF services"
+
+  - name: dwca-validator
+    org: gbif
+    url: https://github.com/gbif/dwca-validator.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/**/*.java"
+    description: "Darwin Core Archive validator"
+
+  - name: dwca-io
+    org: gbif
+    url: https://github.com/gbif/dwca-io.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "src/**/*.java"
+    description: "Darwin Core Archive reader/writer library"
+
+  - name: occurrence
+    org: gbif
+    url: https://github.com/gbif/occurrence.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "occurrence-*/**/*.java"
+      - "**/*.properties"
+      - "**/*.yml"
+    description: "GBIF occurrence processing and download service"
+
+  - name: registry
+    org: gbif
+    url: https://github.com/gbif/registry.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "registry-*/**/*.java"
+      - "**/*.yml"
+    description: "GBIF registry of datasets, organizations, nodes, installations"
+
+  - name: checklistbank
+    org: gbif
+    url: https://github.com/gbif/checklistbank.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "checklistbank-*/**/*.java"
+      - "**/*.yml"
+    description: "GBIF ChecklistBank — taxonomic checklist storage and API"

@@ -1,0 +1,38 @@
+# Living Atlas KB - Tier 1 Repositories
+# Updated: Daily at 2:00 AM
+# Priority: CRITICAL — most-used, actively maintained
+
+repos:
+  - name: ala-install
+    org: AtlasOfLivingAustralia
+    url: https://github.com/AtlasOfLivingAustralia/ala-install.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "ansible/roles/*/tasks/*.yml"
+      - "ansible/roles/*/defaults/*.yml"
+      - "ansible/roles/*/templates/*"
+      - "ansible/group_vars/**/*.yml"
+    description: "Ansible roles and playbooks for deploying LA services"
+
+  - name: la-toolkit
+    org: living-atlases
+    url: https://github.com/living-atlases/la-toolkit.git
+    branch: main
+    patterns:
+      - "**/*.md"
+      - "lib/**/*.dart"
+      - "api/**/*.js"
+      - "config/**/*.js"
+    description: "LA Toolkit: conversational project configuration"
+
+  - name: gbif-pipelines
+    org: gbif
+    url: https://github.com/gbif/pipelines.git
+    branch: master
+    patterns:
+      - "**/*.md"
+      - "livingatlas/**/*.java"
+      - "**/*.properties"
+      - "**/*.yml"
+    description: "GBIF Pipelines: DarwinCore data processing (livingatlas module)"

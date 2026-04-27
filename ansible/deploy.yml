@@ -1,0 +1,53 @@
+---
+# Living Atlas KB - Deploy services only (no indexing)
+# Use when ChromaDB is already populated and you only want to
+# update/restart the REST API and MCP HTTP server.
+#
+# Usage:
+#   ansible-playbook ansible/deploy.yml -i inventory.ini
+
+- name: Deploy living-atlas-kb API and MCP services
+  hosts: kb
+  become: true
+  vars:
+    kb_home: /opt/la-toolkit-kb
+    kb_user: ubuntu
+
+  tasks:
+    - name: Copy server files
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ kb_home }}/server/"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0644"
+      loop:
+        - ../server/__init__.py
+        - ../server/api.py
+        - ../server/mcp_http.py
+        - ../server/mcp_stdio.py
+
+    - name: Install/update server Python dependencies
+      ansible.builtin.pip:
+        name:
+          - fastapi>=0.115
+          - "uvicorn[standard]>=0.30"
+          - chromadb>=0.5
+          - sentence-transformers>=3.0
+          - "mcp>=1.27"
+          - httpx>=0.27
+          - pydantic>=2.0
+        state: present
+        virtualenv: "{{ kb_home }}/venv"
+      become_user: "{{ kb_user }}"
+
+    - name: Restart REST API service
+      ansible.builtin.systemd:
+        name: la-toolkit-kb-api
+        state: restarted
+        daemon_reload: true
+
+    - name: Restart MCP HTTP service
+      ansible.builtin.systemd:
+        name: la-toolkit-kb-mcp
+        state: restarted

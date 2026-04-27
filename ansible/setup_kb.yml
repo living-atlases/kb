@@ -1,0 +1,345 @@
+---
+# Living Atlas Knowledge Base - VM Setup & Indexing
+# Adapted from la-toolkit-kb-setup.yml (prod-gbif-es-ansible-extras)
+#
+# Usage:
+#   Full setup + tier1:
+#     ansible-playbook ansible/setup_kb.yml -i inventory.ini
+#   Full setup + tier1 + tier2:
+#     ansible-playbook ansible/setup_kb.yml -i inventory.ini -e "index_tier2=true"
+#   Re-index only (skip setup phases):
+#     ansible-playbook ansible/setup_kb.yml -i inventory.ini --tags reindex
+
+- name: Living Atlas KB - VM Setup & Indexing
+  hosts: kb
+  become: true
+  vars:
+    kb_home: /opt/la-toolkit-kb          # override for different install path
+    kb_user: ubuntu                      # service user on target host
+    chroma_path: "{{ kb_home }}/data/chromadb/"
+    kb_domain: kb.l-a.site              # override: -e "kb_domain=kb.myatlas.org"
+    rest_api_port: 8080
+    mcp_http_port: 3000
+    index_tier2: false                   # override: -e "index_tier2=true"
+
+  tasks:
+
+    # ── Phase 1: System dependencies ─────────────────────────────────────────
+
+    - name: "Phase 1: Update apt cache"
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install system packages
+      ansible.builtin.apt:
+        name:
+          - python3-pip
+          - python3-dev
+          - python3-venv
+          - build-essential
+          - git
+          - curl
+          - rsync
+          - nginx
+          - certbot
+          - python3-certbot-nginx
+        state: present
+
+    # ── Phase 2: Directory structure ──────────────────────────────────────────
+
+    - name: "Phase 2: Create directory structure"
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+      loop:
+        - "{{ kb_home }}"
+        - "{{ kb_home }}/config"
+        - "{{ kb_home }}/repos"
+        - "{{ kb_home }}/scripts"
+        - "{{ kb_home }}/server"
+        - "{{ kb_home }}/data"
+        - "{{ kb_home }}/data/chromadb"
+        - "{{ kb_home }}/logs"
+
+    # ── Phase 3: Python venv ──────────────────────────────────────────────────
+
+    - name: "Phase 3: Create Python venv"
+      ansible.builtin.command:
+        cmd: "python3 -m venv {{ kb_home }}/venv"
+        creates: "{{ kb_home }}/venv/bin/python"
+      become_user: "{{ kb_user }}"
+
+    - name: Upgrade pip in venv
+      ansible.builtin.command:
+        cmd: "{{ kb_home }}/venv/bin/pip install --upgrade pip setuptools wheel"
+      become_user: "{{ kb_user }}"
+      changed_when: false
+
+    # ── Phase 4: Python dependencies ─────────────────────────────────────────
+
+    - name: "Phase 4: Install Python libraries in venv"
+      ansible.builtin.pip:
+        name:
+          - sentence-transformers>=3.0
+          - chromadb>=0.5
+          - fastapi>=0.115
+          - "uvicorn[standard]>=0.30"
+          - "mcp>=1.27"
+          - httpx>=0.27
+          - pydantic>=2.0
+          - gitpython>=3.1
+          - pyyaml>=6.0
+        state: present
+        virtualenv: "{{ kb_home }}/venv"
+      become_user: "{{ kb_user }}"
+
+    # ── Phase 5: Repo configs ─────────────────────────────────────────────────
+
+    - name: "Phase 5: Copy tier1 repos config"
+      ansible.builtin.copy:
+        src: repos_tier1.yml
+        dest: "{{ kb_home }}/config/repos_tier1.yml"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0644"
+
+    - name: Copy tier2 repos config
+      ansible.builtin.copy:
+        src: repos_tier2.yml
+        dest: "{{ kb_home }}/config/repos_tier2.yml"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0644"
+
+    # ── Phase 6: Server files ─────────────────────────────────────────────────
+
+    - name: "Phase 6: Copy server files"
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ kb_home }}/server/"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0644"
+      loop:
+        - ../server/__init__.py
+        - ../server/api.py
+        - ../server/mcp_http.py
+        - ../server/mcp_stdio.py
+
+    # ── Phase 7: KB indexer script ────────────────────────────────────────────
+
+    - name: "Phase 7: Install kb_indexer.py"
+      ansible.builtin.copy:
+        src: kb_indexer.py
+        dest: "{{ kb_home }}/scripts/kb_indexer.py"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+
+    # ── Phase 8: Index KB ─────────────────────────────────────────────────────
+
+    - name: "Phase 8: Index Tier 1 repos"
+      ansible.builtin.shell: |
+        source {{ kb_home }}/venv/bin/activate
+        cd {{ kb_home }}
+        python3 scripts/kb_indexer.py tier1
+      become_user: "{{ kb_user }}"
+      timeout: 3600
+      tags: [reindex, reindex_tier1]
+
+    - name: "Index Tier 2 repos (optional)"
+      ansible.builtin.shell: |
+        source {{ kb_home }}/venv/bin/activate
+        cd {{ kb_home }}
+        python3 scripts/kb_indexer.py tier2
+      become_user: "{{ kb_user }}"
+      timeout: 10800
+      when: index_tier2 | bool
+      tags: [reindex, reindex_tier2]
+
+    # ── Phase 9: Cron jobs ────────────────────────────────────────────────────
+
+    - name: "Phase 9: Configure cron jobs"
+      ansible.builtin.copy:
+        dest: /etc/cron.d/la-toolkit-kb
+        mode: "0644"
+        content: |
+          # Living Atlas KB maintenance jobs
+          # Tier 1: Daily at 02:00 (ala-install, la-toolkit, gbif-pipelines)
+          0 2 * * * {{ kb_user }} source {{ kb_home }}/venv/bin/activate && python3 {{ kb_home }}/scripts/kb_indexer.py tier1 >> {{ kb_home }}/logs/cron_tier1.log 2>&1
+          # Tier 2: Weekly Sunday at 03:00 (all LA/GBIF service repos)
+          0 3 * * 0 {{ kb_user }} source {{ kb_home }}/venv/bin/activate && python3 {{ kb_home }}/scripts/kb_indexer.py tier2 >> {{ kb_home }}/logs/cron_tier2.log 2>&1
+
+    # ── Phase 10: Systemd services ────────────────────────────────────────────
+
+    - name: "Phase 10: Create systemd service for REST API"
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/la-toolkit-kb-api.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Living Atlas KB REST API
+          After=network.target
+
+          [Service]
+          User={{ kb_user }}
+          WorkingDirectory={{ kb_home }}
+          Environment=CHROMA_PATH={{ chroma_path }}
+          ExecStart={{ kb_home }}/venv/bin/python -m uvicorn server.api:app --host 127.0.0.1 --port {{ rest_api_port }}
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Create systemd service for MCP HTTP server
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/la-toolkit-kb-mcp.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Living Atlas KB MCP HTTP Server
+          After=la-toolkit-kb-api.service
+
+          [Service]
+          User={{ kb_user }}
+          WorkingDirectory={{ kb_home }}
+          Environment=KB_API_URL=http://localhost:8080
+          ExecStart={{ kb_home }}/venv/bin/python server/mcp_http.py
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: restarted
+        daemon_reload: true
+      loop:
+        - la-toolkit-kb-api
+        - la-toolkit-kb-mcp
+
+    # ── Phase 10b: Intro page ─────────────────────────────────────────────────
+
+    - name: Create web root directory
+      ansible.builtin.file:
+        path: /var/www/la-toolkit-kb
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+
+    - name: Create intro index.html
+      ansible.builtin.copy:
+        dest: /var/www/la-toolkit-kb/index.html
+        owner: www-data
+        group: www-data
+        mode: "0644"
+        content: |
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Living Atlas Knowledge Base</title>
+            <style>
+              body { font-family: system-ui, sans-serif; max-width: 720px; margin: 3rem auto; padding: 0 1rem; color: #222; }
+              h1 { color: #1a6c37; }
+              a { color: #1a6c37; }
+              code { background: #f4f4f4; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+              .endpoints { border-collapse: collapse; width: 100%; }
+              .endpoints th, .endpoints td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ddd; }
+              .endpoints th { background: #f0f8f2; }
+            </style>
+          </head>
+          <body>
+            <h1>Living Atlas Knowledge Base</h1>
+            <p>
+              Semantic search API and MCP server over the
+              <a href="https://github.com/living-atlases">Living Atlases</a> /
+              <a href="https://github.com/gbif">GBIF</a> documentation corpus.
+            </p>
+
+            <h2>Endpoints</h2>
+            <table class="endpoints">
+              <tr><th>URL</th><th>Description</th></tr>
+              <tr><td><a href="/api/docs"><code>/api/docs</code></a></td><td>Interactive REST API (Swagger UI)</td></tr>
+              <tr><td><code>/api/query</code></td><td>Semantic search — POST {"question":"…","n_results":5}</td></tr>
+              <tr><td><code>/api/collections</code></td><td>List indexed collections</td></tr>
+              <tr><td><code>/health</code></td><td>Health check</td></tr>
+              <tr><td><code>/mcp</code></td><td>MCP streamable-HTTP for AI agents</td></tr>
+            </table>
+
+            <h2>Usage example</h2>
+            <pre><code>curl -s https://{{ kb_domain }}/api/query \
+              -H 'Content-Type: application/json' \
+              -d '{"question":"How to configure biocache-service?","n_results":3}' | jq .</code></pre>
+
+            <h2>Source</h2>
+            <p><a href="https://github.com/living-atlases/living-atlas-kb">github.com/living-atlases/living-atlas-kb</a></p>
+          </body>
+          </html>
+
+    # ── Phase 11: nginx + TLS ─────────────────────────────────────────────────
+
+    - name: "Phase 11: Configure nginx"
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/la-toolkit-kb
+        mode: "0644"
+        content: |
+          server {
+              listen 443 ssl;
+              server_name {{ kb_domain }};
+
+              ssl_certificate /etc/letsencrypt/live/{{ kb_domain }}/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/{{ kb_domain }}/privkey.pem;
+
+              location /api/ {
+                  proxy_pass http://127.0.0.1:{{ rest_api_port }};
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+              }
+
+              location /mcp {
+                  proxy_pass http://127.0.0.1:{{ mcp_http_port }};
+                  proxy_set_header Host $host;
+                  proxy_set_header Connection "";
+                  proxy_http_version 1.1;
+                  proxy_buffering off;
+              }
+
+              location /health {
+                  proxy_pass http://127.0.0.1:{{ rest_api_port }};
+              }
+
+              root /var/www/la-toolkit-kb;
+              index index.html;
+
+              location / {
+                  try_files $uri $uri/ =404;
+              }
+          }
+
+          server {
+              listen 80;
+              server_name {{ kb_domain }};
+              return 301 https://$host$request_uri;
+          }
+
+    - name: Enable nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/la-toolkit-kb
+        dest: /etc/nginx/sites-enabled/la-toolkit-kb
+        state: link
+
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
