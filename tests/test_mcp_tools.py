@@ -4,6 +4,9 @@ from unittest.mock import AsyncMock, patch, MagicMock
 import httpx
 
 
+# We test the tool handler functions directly, not the MCP transport layer
+# The handlers call the REST API via httpx
+
 @pytest.fixture
 def mock_httpx_client():
     client = AsyncMock(spec=httpx.AsyncClient)
