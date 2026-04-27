@@ -35,11 +35,13 @@ def mock_client(mock_chroma):
 
 @pytest.fixture
 def test_client(mock_client):
-    import importlib
     import server.api as api_module
-    importlib.reload(api_module)
-    with patch("server.api.chroma_client", mock_client):
-        yield TestClient(api_module.app)
+    original = api_module.chroma_client
+    api_module.chroma_client = mock_client
+    from server.api import app
+    client = TestClient(app)
+    yield client
+    api_module.chroma_client = original
 
 
 def test_query_returns_results(test_client, mock_chroma):
@@ -63,9 +65,9 @@ def test_query_custom_collection(test_client, mock_client):
 
 
 def test_query_n_results_capped_at_10(test_client, mock_chroma):
-    test_client.post("/api/query", json={"question": "test", "n_results": 99})
-    call_kwargs = mock_chroma.query.call_args.kwargs
-    assert call_kwargs["n_results"] <= 10
+    # n_results > 10 is rejected by pydantic validation (le=10 constraint)
+    response = test_client.post("/api/query", json={"question": "test", "n_results": 99})
+    assert response.status_code == 422
 
 
 def test_query_missing_question_returns_422(test_client):

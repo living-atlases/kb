@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "/opt/la-toolkit-kb/data/chromadb/")
 
-chroma_client: chromadb.PersistentClient = None  # set on startup
+chroma_client: Optional[chromadb.PersistentClient] = None  # set on startup
 
 
 @asynccontextmanager
@@ -26,7 +26,7 @@ app = FastAPI(title="Living Atlas KB API", lifespan=lifespan)
 class QueryRequest(BaseModel):
     question: str
     collection: str = "la_toolkit_kb"
-    n_results: int = Field(default=5, ge=1)
+    n_results: int = Field(default=5, ge=1, le=10)
 
 
 class QueryResult(BaseModel):
@@ -62,7 +62,7 @@ def query(req: QueryRequest):
 
     results = col.query(
         query_texts=[req.question],
-        n_results=min(req.n_results, 10),
+        n_results=req.n_results,
         include=["documents", "metadatas", "distances"],
     )
 
