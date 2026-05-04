@@ -99,18 +99,10 @@
 
     # ── Phase 5: Repo configs ─────────────────────────────────────────────────
 
-    - name: "Phase 5: Copy tier1 repos config"
+    - name: "Phase 5: Copy repos manifest"
       ansible.builtin.copy:
-        src: repos_tier1.yml
-        dest: "{{ kb_home }}/config/repos_tier1.yml"
-        owner: "{{ kb_user }}"
-        group: "{{ kb_user }}"
-        mode: "0644"
-
-    - name: Copy tier2 repos config
-      ansible.builtin.copy:
-        src: repos_tier2.yml
-        dest: "{{ kb_home }}/config/repos_tier2.yml"
+        src: repos.yml
+        dest: "{{ kb_home }}/config/repos.yml"
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0644"
@@ -127,6 +119,7 @@
       loop:
         - ../server/__init__.py
         - ../server/api.py
+        - ../server/chat.py
         - ../server/mcp_http.py
         - ../server/mcp_stdio.py
 

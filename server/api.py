@@ -11,9 +11,9 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 try:
-    from chat import build_prompt, stream_ollama
+    from chat import build_messages, stream_ollama
 except ImportError:
-    from server.chat import build_prompt, stream_ollama
+    from server.chat import build_messages, stream_ollama
 
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "/opt/la-toolkit-kb/data/chromadb/")
 
@@ -204,10 +204,10 @@ async def _chat_sse_generator(req: ChatRequest):
         include=["documents"],
     )
     context_chunks = results["documents"][0] if results["documents"] else []
-    prompt = build_prompt(context_chunks, req.question)
+    messages = build_messages(context_chunks, req.question)
 
     try:
-        async for token in stream_ollama(prompt):
+        async for token in stream_ollama(messages):
             # Escape newlines inside JSON string value
             escaped = token.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
             yield f'data: {{"token": "{escaped}"}}\n\n'

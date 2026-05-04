@@ -1,15 +1,157 @@
 # living-atlas-kb
 
-Knowledge base service for Living Atlas / ALA repositories — semantic search and AI chat over documentation, configuration, and source code.
+Knowledge base service for Living Atlas / ALA repositories — semantic search over documentation, configuration, and source code, exposed as an **MCP tool** for AI assistants and as a REST API.
 
+- **MCP endpoint:** `https://kb.l-a.site/mcp`
 - **REST API:** `https://kb.l-a.site/api/`
-- **MCP remote:** `https://kb.l-a.site/mcp`
 - **API docs:** `https://kb.l-a.site/api/docs`
 - **Live collections:** `https://kb.l-a.site/api/collections`
 
 ---
 
+## MCP Integration (Claude / AI agents)
+
+The primary use-case. Connect any MCP-capable AI assistant to query the KB.
+
+### Claude Desktop (`claude_desktop_config.json`)
+
+```json
+{
+  "mcpServers": {
+    "living-atlas-kb": {
+      "type": "http",
+      "url": "https://kb.l-a.site/mcp"
+    }
+  }
+}
+```
+
+File location:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
+
+### OpenCode / Claude Code
+
+Add to `~/.config/opencode/opencode.json` (or project-level `.opencode.json`):
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "living-atlas-kb": {
+        "type": "http",
+        "url": "https://kb.l-a.site/mcp"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to `.cursor/mcp.json` in your project root, or `~/.cursor/mcp.json` globally:
+
+```json
+{
+  "mcpServers": {
+    "living-atlas-kb": {
+      "type": "http",
+      "url": "https://kb.l-a.site/mcp"
+    }
+  }
+}
+```
+
+### VS Code (GitHub Copilot)
+
+Add to `.vscode/settings.json` or user settings:
+
+```json
+{
+  "github.copilot.chat.mcp.servers": {
+    "living-atlas-kb": {
+      "type": "http",
+      "url": "https://kb.l-a.site/mcp"
+    }
+  }
+}
+```
+
+### Cline / Roo Code
+
+Settings → MCP Servers → Add:
+
+```json
+{
+  "living-atlas-kb": {
+    "type": "http",
+    "url": "https://kb.l-a.site/mcp"
+  }
+}
+```
+
+### Self-hosted / stdio mode
+
+If running a local instance, you can also use stdio transport pointing to the local server:
+
+```json
+{
+  "mcpServers": {
+    "living-atlas-kb-local": {
+      "command": "python3",
+      "args": ["/opt/la-toolkit-kb/server/mcp_stdio.py"],
+      "env": {
+        "CHROMA_PATH": "/opt/la-toolkit-kb/data/chromadb",
+        "OLLAMA_BASE_URL": "http://127.0.0.1:11434"
+      }
+    }
+  }
+}
+```
+
+### Available MCP tools
+
+Once connected, the KB exposes:
+
+| Tool | Description |
+|---|---|
+| `query_la_kb` | Semantic search over all indexed repos |
+| `list_la_kb_collections` | List available collections with doc counts |
+
+---
+
+## API Usage
+
+### Semantic search
+
+```bash
+curl -X POST https://kb.l-a.site/api/query \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "How do I configure collectory?", "collection": "la_toolkit_kb", "n_results": 5}'
+```
+
+### AI chat (RAG + streaming)
+
+```bash
+curl -N -X POST https://kb.l-a.site/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"question": "How do I deploy biocache-service?", "collection": "la_toolkit_kb"}'
+```
+
+Response is a server-sent events (SSE) stream:
+
+```
+data: {"token": "To deploy biocache-service"}
+data: {"token": " you need to..."}
+data: [DONE]
+```
+
+---
+
 ## Indexed Repositories
+
+All repos are defined in [`ansible/repos.yml`](ansible/repos.yml) — single source of truth.
 
 ### Tier 1 — Daily updates
 
@@ -28,9 +170,11 @@ Knowledge base service for Living Atlas / ALA repositories — semantic search a
 | [biocache-hubs](https://github.com/AtlasOfLivingAustralia/biocache-hubs) | AtlasOfLivingAustralia | Occurrence hub web app |
 | [ala-bie-hub](https://github.com/AtlasOfLivingAustralia/ala-bie-hub) | AtlasOfLivingAustralia | Biodiversity Information Explorer hub |
 | [bie-index](https://github.com/AtlasOfLivingAustralia/bie-index) | AtlasOfLivingAustralia | BIE species index service |
+| [atlas-index](https://github.com/AtlasOfLivingAustralia/atlas-index) | AtlasOfLivingAustralia | New species search index (replaces bie-index) |
 | [image-service](https://github.com/AtlasOfLivingAustralia/image-service) | AtlasOfLivingAustralia | Image management service |
 | [specieslist-webapp](https://github.com/AtlasOfLivingAustralia/specieslist-webapp) | AtlasOfLivingAustralia | Species lists web app (legacy) |
 | [species-lists](https://github.com/AtlasOfLivingAustralia/species-lists) | AtlasOfLivingAustralia | Species lists service (new) |
+| [authoritative-lists](https://github.com/AtlasOfLivingAustralia/authoritative-lists) | AtlasOfLivingAustralia | Authoritative species lists management |
 | [spatial-hub](https://github.com/AtlasOfLivingAustralia/spatial-hub) | AtlasOfLivingAustralia | Spatial analysis hub |
 | [spatial-service](https://github.com/AtlasOfLivingAustralia/spatial-service) | AtlasOfLivingAustralia | Spatial analysis service |
 | [regions](https://github.com/AtlasOfLivingAustralia/regions) | AtlasOfLivingAustralia | Regions management service |
@@ -41,6 +185,13 @@ Knowledge base service for Living Atlas / ALA repositories — semantic search a
 | [alerts](https://github.com/AtlasOfLivingAustralia/alerts) | AtlasOfLivingAustralia | User alerts service |
 | [doi-service](https://github.com/AtlasOfLivingAustralia/doi-service) | AtlasOfLivingAustralia | DOI minting service |
 | [userdetails](https://github.com/AtlasOfLivingAustralia/userdetails) | AtlasOfLivingAustralia | User management service |
+| [ala-cas-5](https://github.com/AtlasOfLivingAustralia/ala-cas-5) | AtlasOfLivingAustralia | CAS 6.x authentication server for LA portals |
+| [volunteer-portal](https://github.com/AtlasOfLivingAustralia/volunteer-portal) | AtlasOfLivingAustralia | DigiVol citizen science volunteer portal |
+| [ecodata](https://github.com/AtlasOfLivingAustralia/ecodata) | AtlasOfLivingAustralia | Ecological and environmental data service |
+| [profile-hub](https://github.com/AtlasOfLivingAustralia/profile-hub) | AtlasOfLivingAustralia | Species profile hub |
+| [fieldcapture](https://github.com/AtlasOfLivingAustralia/fieldcapture) | AtlasOfLivingAustralia | Field data capture application |
+| [biocollect](https://github.com/AtlasOfLivingAustralia/biocollect) | AtlasOfLivingAustralia | Biological data collection application |
+| [commonui-bs5-2024](https://github.com/AtlasOfLivingAustralia/commonui-bs5-2024) | AtlasOfLivingAustralia | Bootstrap 5 common UI components for LA portals |
 | [base-branding](https://github.com/living-atlases/base-branding) | living-atlases | LA base branding and theming |
 | [ipt](https://github.com/gbif/ipt) | gbif | GBIF Integrated Publishing Toolkit — DarwinCore data publishing |
 | [gbif-api](https://github.com/gbif/gbif-api) | gbif | GBIF public Java API model — shared types/enums |
@@ -54,60 +205,25 @@ Knowledge base service for Living Atlas / ALA repositories — semantic search a
 
 ## How to Add a Repository
 
-Missing a repo? Open a PR:
-
-1. Edit [`ansible/repos_tier2.yml`](ansible/repos_tier2.yml) and add an entry:
+Open a PR editing [`ansible/repos.yml`](ansible/repos.yml):
 
 ```yaml
-- name: your-repo
-  org: YourOrg
-  url: https://github.com/YourOrg/your-repo.git
-  branch: main
-  patterns:
-    - "**/*.md"
-    - "src/**/*.java"   # adjust to your stack
-  description: "Short description of what this service does"
+tiers:
+  tier2:
+    repos:
+      - name: your-repo
+        org: YourOrg
+        url: https://github.com/YourOrg/your-repo.git
+        branch: main
+        patterns:
+          - "**/*.md"
+          - "src/**/*.java"   # adjust to your stack
+        description: "Short description of what this service does"
 ```
 
-2. Open a PR targeting `main`.
-3. After merge, run `ansible/setup_kb.yml` on the server to index the new repo.
+**Criteria:** actively maintained public LA/GBIF ecosystem service with meaningful docs or config.
 
-**Criteria for inclusion:**
-- Actively maintained LA/GBIF ecosystem service
-- Has meaningful documentation or configuration worth indexing
-
----
-
-## API Usage
-
-### Semantic search
-
-```bash
-curl -X POST https://kb.l-a.site/api/query \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "How do I configure collectory?", "collection": "la_toolkit_kb", "n_results": 5}'
-```
-
-### AI chat (RAG + Qwen)
-
-```bash
-curl -X POST https://kb.l-a.site/api/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "How do I deploy biocache-service?", "collection": "la_toolkit_kb"}'
-```
-
-### MCP (Claude / AI agents)
-
-```json
-{
-  "mcpServers": {
-    "living-atlas-kb": {
-      "type": "http",
-      "url": "https://kb.l-a.site/mcp"
-    }
-  }
-}
-```
+After merge, re-run `ansible/setup_kb.yml` on the server to index the new repo.
 
 ---
 

@@ -41,28 +41,44 @@ def app_client(mock_chroma_client):
 
 # ── chat.py unit tests ───────────────────────────────────────────────────────
 
-class TestBuildPrompt:
+class TestBuildMessages:
     def test_includes_question(self):
-        from server.chat import build_prompt
-        prompt = build_prompt(["context chunk"], "How to deploy collectory?")
-        assert "How to deploy collectory?" in prompt
+        from server.chat import build_messages
+        messages = build_messages(["context chunk"], "How to deploy collectory?")
+        user_msg = next(m for m in messages if m["role"] == "user")
+        assert "How to deploy collectory?" in user_msg["content"]
 
     def test_includes_context(self):
-        from server.chat import build_prompt
-        prompt = build_prompt(["important context"], "some question")
-        assert "important context" in prompt
+        from server.chat import build_messages
+        messages = build_messages(["important context"], "some question")
+        user_msg = next(m for m in messages if m["role"] == "user")
+        assert "important context" in user_msg["content"]
 
     def test_empty_context(self):
-        from server.chat import build_prompt
-        prompt = build_prompt([], "some question")
-        assert "some question" in prompt
-        assert "[INST]" in prompt
+        from server.chat import build_messages
+        messages = build_messages([], "some question")
+        user_msg = next(m for m in messages if m["role"] == "user")
+        assert "some question" in user_msg["content"]
+        assert "(no context)" in user_msg["content"]
 
     def test_multiple_chunks_joined(self):
-        from server.chat import build_prompt
-        prompt = build_prompt(["chunk1", "chunk2"], "q")
-        assert "chunk1" in prompt
-        assert "chunk2" in prompt
+        from server.chat import build_messages
+        messages = build_messages(["chunk1", "chunk2"], "q")
+        user_msg = next(m for m in messages if m["role"] == "user")
+        assert "chunk1" in user_msg["content"]
+        assert "chunk2" in user_msg["content"]
+
+    def test_has_system_role(self):
+        from server.chat import build_messages
+        messages = build_messages([], "q")
+        assert messages[0]["role"] == "system"
+
+    def test_no_inst_tokens(self):
+        """Verify old Llama [INST] format is not used."""
+        from server.chat import build_messages
+        messages = build_messages(["ctx"], "q")
+        full = json.dumps(messages)
+        assert "[INST]" not in full
 
 
 class TestStreamOllama:
@@ -71,9 +87,9 @@ class TestStreamOllama:
         from server.chat import stream_ollama
 
         fake_lines = [
-            json.dumps({"response": "Hello", "done": False}),
-            json.dumps({"response": " world", "done": False}),
-            json.dumps({"response": "", "done": True}),
+            json.dumps({"message": {"role": "assistant", "content": "Hello"}, "done": False}),
+            json.dumps({"message": {"role": "assistant", "content": " world"}, "done": False}),
+            json.dumps({"message": {"role": "assistant", "content": ""}, "done": True}),
         ]
 
         class FakeStreamResponse:
@@ -100,8 +116,9 @@ class TestStreamOllama:
             async def __aexit__(self, *_):
                 pass
 
+        messages = [{"role": "user", "content": "test"}]
         with patch("server.chat.httpx.AsyncClient", return_value=FakeClient()):
-            tokens = [t async for t in stream_ollama("test prompt")]
+            tokens = [t async for t in stream_ollama(messages)]
 
         assert tokens == ["Hello", " world"]
 
@@ -110,8 +127,8 @@ class TestStreamOllama:
         from server.chat import stream_ollama
 
         fake_lines = [
-            json.dumps({"response": "", "done": False}),
-            json.dumps({"response": "text", "done": True}),
+            json.dumps({"message": {"role": "assistant", "content": ""}, "done": False}),
+            json.dumps({"message": {"role": "assistant", "content": "text"}, "done": True}),
         ]
 
         class FakeStreamResponse:
@@ -138,8 +155,9 @@ class TestStreamOllama:
             async def __aexit__(self, *_):
                 pass
 
+        messages = [{"role": "user", "content": "test"}]
         with patch("server.chat.httpx.AsyncClient", return_value=FakeClient()):
-            tokens = [t async for t in stream_ollama("test prompt")]
+            tokens = [t async for t in stream_ollama(messages)]
 
         # "text" token arrives with done=True — still yielded before break
         assert tokens == ["text"]
@@ -155,7 +173,7 @@ class TestChatEndpoint:
         return "".join(lines)
 
     def _mock_stream_ollama(self, tokens):
-        async def _gen(_prompt):
+        async def _gen(_messages):
             for t in tokens:
                 yield t
         return _gen
@@ -190,7 +208,7 @@ class TestChatEndpoint:
     def test_chat_ollama_unavailable(self, app_client, mock_chroma_client):
         import httpx
 
-        async def _failing(_prompt):
+        async def _failing(_messages):
             raise httpx.ConnectError("connection refused")
             yield  # make it an async generator
 
