@@ -1,0 +1,140 @@
+---
+# ansible/install_ollama.yml
+# Installs Ollama and pulls the configured LLM model for LA KB chat endpoint.
+#
+# Usage:
+#   ansible-playbook ansible/install_ollama.yml -i inventory.ini
+#
+# Variables (override in inventory or extra-vars):
+#   ollama_model: qwen2.5:14b-instruct-q4_K_M
+#   ollama_host:  0.0.0.0  (bind only to localhost in production via nginx)
+#   ollama_port:  11434
+
+- name: Install Ollama and pull LLM model
+  hosts: kb
+  become: true
+  vars:
+    ollama_model: "qwen2.5:14b-instruct-q4_K_M"
+    ollama_host: "127.0.0.1"
+    ollama_port: 11434
+    ollama_install_script: "https://ollama.com/install.sh"
+    ollama_service_user: ollama
+    ollama_data_dir: /opt/ollama
+
+  tasks:
+    - name: Check if Ollama is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/ollama
+      register: ollama_bin
+
+    - name: Download and run Ollama install script
+      ansible.builtin.shell:
+        cmd: "curl -fsSL {{ ollama_install_script }} | sh"
+      when: not ollama_bin.stat.exists
+      changed_when: true
+
+    - name: Ensure Ollama data directory exists
+      ansible.builtin.file:
+        path: "{{ ollama_data_dir }}"
+        state: directory
+        owner: "{{ ollama_service_user }}"
+        group: "{{ ollama_service_user }}"
+        mode: "0755"
+
+    - name: Ensure systemd override directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/ollama.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Configure Ollama systemd override (bind address + data dir)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/ollama.service.d/override.conf
+        content: |
+          [Service]
+          Environment="OLLAMA_HOST={{ ollama_host }}:{{ ollama_port }}"
+          Environment="OLLAMA_MODELS={{ ollama_data_dir }}/models"
+        mode: "0644"
+      notify: Restart ollama
+
+    - name: Enable and start Ollama service
+      ansible.builtin.systemd:
+        name: ollama
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Wait for Ollama API to be ready
+      ansible.builtin.uri:
+        url: "http://{{ ollama_host }}:{{ ollama_port }}/api/version"
+        status_code: 200
+      register: ollama_ready
+      retries: 12
+      delay: 5
+      until: ollama_ready.status == 200
+
+    - name: Check if model is already pulled
+      ansible.builtin.uri:
+        url: "http://{{ ollama_host }}:{{ ollama_port }}/api/show"
+        method: POST
+        body_format: json
+        body:
+          name: "{{ ollama_model }}"
+        status_code: [200, 404]
+      register: model_check
+
+    - name: Pull Ollama model (may take several minutes)
+      ansible.builtin.uri:
+        url: "http://{{ ollama_host }}:{{ ollama_port }}/api/pull"
+        method: POST
+        body_format: json
+        body:
+          name: "{{ ollama_model }}"
+          stream: false
+        timeout: 1800
+        status_code: 200
+      when: model_check.status == 404
+
+    - name: Configure nginx rate limiting for /api/chat
+      ansible.builtin.blockinfile:
+        path: /etc/nginx/conf.d/la-kb-rate-limit.conf
+        create: true
+        block: |
+          # Rate limiting zones for LA KB
+          # /api/query  — generous (fast, ChromaDB only)
+          limit_req_zone $binary_remote_addr zone=kb_query:10m rate=30r/m;
+          # /api/chat   — restrictive (Ollama inference is expensive)
+          limit_req_zone $binary_remote_addr zone=kb_chat:10m rate=6r/m;
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Ensure /api/chat location uses rate limit in nginx site config
+      ansible.builtin.blockinfile:
+        path: /etc/nginx/sites-available/la-toolkit-kb
+        marker: "# {mark} ANSIBLE MANAGED — /api/chat rate limit"
+        insertafter: "location /api/"
+        block: |
+          location /api/chat {
+              limit_req zone=kb_chat burst=3 nodelay;
+              limit_req_status 429;
+              proxy_pass http://127.0.0.1:8000;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              # SSE: disable buffering so chunks stream to client immediately
+              proxy_buffering off;
+              proxy_cache off;
+              proxy_read_timeout 120s;
+          }
+      notify: Reload nginx
+
+  handlers:
+    - name: Restart ollama
+      ansible.builtin.systemd:
+        name: ollama
+        state: restarted
+        daemon_reload: true
+
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

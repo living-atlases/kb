@@ -12,6 +12,7 @@
   vars:
     kb_home: /opt/la-toolkit-kb
     kb_user: ubuntu
+    kb_domain: kb.l-a.site
 
   tasks:
     - name: Copy server files
@@ -24,6 +25,7 @@
       loop:
         - ../server/__init__.py
         - ../server/api.py
+        - ../server/chat.py
         - ../server/mcp_http.py
         - ../server/mcp_stdio.py
 
@@ -41,13 +43,123 @@
         virtualenv: "{{ kb_home }}/venv"
       become_user: "{{ kb_user }}"
 
-    - name: Restart REST API service
+    - name: Create systemd service for REST API
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/la-toolkit-kb-api.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Living Atlas KB REST API
+          After=network.target
+
+          [Service]
+          User={{ kb_user }}
+          WorkingDirectory={{ kb_home }}
+          Environment=CHROMA_PATH={{ kb_home }}/data/chromadb/
+          ExecStart={{ kb_home }}/venv/bin/python -m uvicorn server.api:app --host 127.0.0.1 --port 8080
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Create systemd service for MCP HTTP server
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/la-toolkit-kb-mcp.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Living Atlas KB MCP HTTP Server
+          After=la-toolkit-kb-api.service
+
+          [Service]
+          User={{ kb_user }}
+          WorkingDirectory={{ kb_home }}
+          Environment=KB_API_URL=http://localhost:8080
+          ExecStart={{ kb_home }}/venv/bin/python server/mcp_http.py
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and restart services
       ansible.builtin.systemd:
-        name: la-toolkit-kb-api
+        name: "{{ item }}"
+        enabled: true
         state: restarted
         daemon_reload: true
+      loop:
+        - la-toolkit-kb-api
+        - la-toolkit-kb-mcp
 
-    - name: Restart MCP HTTP service
+    - name: Install nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: yes
+
+    - name: Create web root directory
+      ansible.builtin.file:
+        path: /var/www/la-toolkit-kb
+        state: directory
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+
+    - name: Sync Flutter web build to server
+      ansible.posix.synchronize:
+        src: ../dart/example/build/web/
+        dest: /var/www/la-toolkit-kb/
+        delete: true
+        recursive: true
+
+    - name: Configure nginx — serve Flutter web + proxy /api/ to backend
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/kb
+        mode: "0644"
+        content: |
+          server {
+              listen 80;
+              server_name {{ kb_domain }};
+
+              root /var/www/la-toolkit-kb;
+              index index.html;
+
+              # Proxy API calls to the Python backend
+              location /api/ {
+                  proxy_pass http://127.0.0.1:8080;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_read_timeout 120s;
+                  # Required for SSE streaming
+                  proxy_buffering off;
+                  proxy_cache off;
+                  chunked_transfer_encoding on;
+              }
+
+              # Serve Flutter web SPA — fallback to index.html
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+
+    - name: Enable nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/kb
+        dest: /etc/nginx/sites-enabled/kb
+        state: link
+
+    - name: Remove nginx default site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Enable and restart nginx
       ansible.builtin.systemd:
-        name: la-toolkit-kb-mcp
+        name: nginx
+        enabled: true
         state: restarted
+        daemon_reload: true
