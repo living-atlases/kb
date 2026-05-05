@@ -107,6 +107,13 @@
         group: "{{ kb_user }}"
         mode: "0755"
 
+    - name: Build Flutter web app (local)
+      ansible.builtin.command:
+        cmd: flutter build web --release
+        chdir: ../dart/example
+      delegate_to: localhost
+      become: false
+
     - name: Sync Flutter web build to server
       ansible.posix.synchronize:
         src: ../dart/example/build/web/
