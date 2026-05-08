@@ -1,27 +1,63 @@
 ---
 # ansible/install_ollama.yml
-# Installs Ollama and pulls the configured LLM model for LA KB chat endpoint.
+# Installs Ollama, configures extra volume, and pulls the configured LLM model.
 #
 # Usage:
 #   ansible-playbook ansible/install_ollama.yml -i inventory.ini
 #
 # Variables (override in inventory or extra-vars):
-#   ollama_model: qwen2.5:14b-instruct-q4_K_M
-#   ollama_host:  0.0.0.0  (bind only to localhost in production via nginx)
-#   ollama_port:  11434
+#   ollama_model:        qwen3-coder:30b
+#   ollama_host:         127.0.0.1
+#   ollama_port:         11434
+#   ollama_data_dir:     /var/lib/ollama   (mount point for extra volume)
+#   ollama_data_device:  /dev/vdb          (extra OpenStack volume)
+#   ollama_data_fstype:  ext4
 
-- name: Install Ollama and pull LLM model
+- name: Install Ollama, configure storage, and pull LLM model
   hosts: kb
   become: true
   vars:
-    ollama_model: "qwen2.5:14b-instruct-q4_K_M"
+    ollama_model: "qwen3-coder:30b"
     ollama_host: "127.0.0.1"
     ollama_port: 11434
     ollama_install_script: "https://ollama.com/install.sh"
     ollama_service_user: ollama
-    ollama_data_dir: /opt/ollama
+    ollama_data_dir: /var/lib/ollama
+    ollama_data_device: /dev/vdb
+    ollama_data_fstype: ext4
 
   tasks:
+    # ── Volume setup ─────────────────────────────────────────────────────────
+
+    - name: Check if extra volume has a filesystem
+      ansible.builtin.command:
+        cmd: "blkid -s TYPE -o value {{ ollama_data_device }}"
+      register: blkid_result
+      changed_when: false
+      failed_when: false
+
+    - name: Format extra volume (only if no filesystem detected)
+      ansible.builtin.command:
+        cmd: "mkfs.{{ ollama_data_fstype }} -L ollama-data {{ ollama_data_device }}"
+      when: blkid_result.stdout | trim == ""
+      changed_when: true
+
+    - name: Ensure mount point exists
+      ansible.builtin.file:
+        path: "{{ ollama_data_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Mount extra volume and persist in fstab
+      ansible.posix.mount:
+        path: "{{ ollama_data_dir }}"
+        src: "{{ ollama_data_device }}"
+        fstype: "{{ ollama_data_fstype }}"
+        opts: defaults,noatime
+        state: mounted
+
+    # ── Ollama install ────────────────────────────────────────────────────────
+
     - name: Check if Ollama is already installed
       ansible.builtin.stat:
         path: /usr/local/bin/ollama
@@ -33,13 +69,20 @@
       when: not ollama_bin.stat.exists
       changed_when: true
 
-    - name: Ensure Ollama data directory exists
+    - name: Set ownership of data directory to ollama user
       ansible.builtin.file:
         path: "{{ ollama_data_dir }}"
-        state: directory
         owner: "{{ ollama_service_user }}"
         group: "{{ ollama_service_user }}"
-        mode: "0755"
+        recurse: false
+
+    # ── Systemd override ──────────────────────────────────────────────────────
+
+    - name: Remove legacy models-path.conf if present
+      ansible.builtin.file:
+        path: /etc/systemd/system/ollama.service.d/models-path.conf
+        state: absent
+      notify: Restart ollama
 
     - name: Ensure systemd override directory exists
       ansible.builtin.file:
@@ -63,6 +106,8 @@
         enabled: true
         state: started
         daemon_reload: true
+
+    # ── Model pull ────────────────────────────────────────────────────────────
 
     - name: Wait for Ollama API to be ready
       ansible.builtin.uri:
@@ -95,46 +140,9 @@
         status_code: 200
       when: model_check.status == 404
 
-    - name: Configure nginx rate limiting for /api/chat
-      ansible.builtin.blockinfile:
-        path: /etc/nginx/conf.d/la-kb-rate-limit.conf
-        create: true
-        block: |
-          # Rate limiting zones for LA KB
-          # /api/query  — generous (fast, ChromaDB only)
-          limit_req_zone $binary_remote_addr zone=kb_query:10m rate=30r/m;
-          # /api/chat   — restrictive (Ollama inference is expensive)
-          limit_req_zone $binary_remote_addr zone=kb_chat:10m rate=6r/m;
-        mode: "0644"
-      notify: Reload nginx
-
-    - name: Ensure /api/chat location uses rate limit in nginx site config
-      ansible.builtin.blockinfile:
-        path: /etc/nginx/sites-available/la-toolkit-kb
-        marker: "# {mark} ANSIBLE MANAGED — /api/chat rate limit"
-        insertafter: "location /api/"
-        block: |
-          location /api/chat {
-              limit_req zone=kb_chat burst=3 nodelay;
-              limit_req_status 429;
-              proxy_pass http://127.0.0.1:8000;
-              proxy_set_header Host $host;
-              proxy_set_header X-Real-IP $remote_addr;
-              # SSE: disable buffering so chunks stream to client immediately
-              proxy_buffering off;
-              proxy_cache off;
-              proxy_read_timeout 120s;
-          }
-      notify: Reload nginx
-
   handlers:
     - name: Restart ollama
       ansible.builtin.systemd:
         name: ollama
         state: restarted
         daemon_reload: true
-
-    - name: Reload nginx
-      ansible.builtin.service:
-        name: nginx
-        state: reloaded
