@@ -51,9 +51,9 @@
     - name: Mount extra volume and persist in fstab
       ansible.posix.mount:
         path: "{{ ollama_data_dir }}"
-        src: "{{ ollama_data_device }}"
+        src: "LABEL=ollama-data"
         fstype: "{{ ollama_data_fstype }}"
-        opts: defaults,noatime
+        opts: defaults,noatime,nofail
         state: mounted
 
     # ── Ollama install ────────────────────────────────────────────────────────
