@@ -55,10 +55,16 @@ class CollectionsResponse(BaseModel):
     collections: list[CollectionInfo]
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
 class ChatRequest(BaseModel):
     question: str
     collection: str = "la_toolkit_kb"
     n_results: int = Field(default=5, ge=1, le=10)
+    history: list[ChatMessage] = Field(default_factory=list)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -204,7 +210,8 @@ async def _chat_sse_generator(req: ChatRequest):
         include=["documents"],
     )
     context_chunks = results["documents"][0] if results["documents"] else []
-    messages = build_messages(context_chunks, req.question)
+    history = [{"role": m.role, "content": m.content} for m in req.history]
+    messages = build_messages(context_chunks, req.question, history=history)
 
     try:
         async for token in stream_ollama(messages):

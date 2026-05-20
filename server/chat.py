@@ -19,12 +19,42 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_messages(context_chunks: list[str], question: str) -> list[dict]:
-    """Build Ollama chat messages list from context and question.
+MAX_HISTORY_MESSAGES = 12
+ALLOWED_ROLES = {"user", "assistant"}
+
+
+def _sanitize_history(history: list[dict] | None) -> list[dict]:
+    """Drop malformed entries and cap to the last MAX_HISTORY_MESSAGES."""
+    if not history:
+        return []
+    clean: list[dict] = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in ALLOWED_ROLES or not isinstance(content, str) or not content.strip():
+            continue
+        clean.append({"role": role, "content": content})
+    if len(clean) > MAX_HISTORY_MESSAGES:
+        clean = clean[-MAX_HISTORY_MESSAGES:]
+    return clean
+
+
+def build_messages(
+    context_chunks: list[str],
+    question: str,
+    history: list[dict] | None = None,
+) -> list[dict]:
+    """Build Ollama chat messages list from context, history and question.
 
     Uses the chat completions format so Ollama applies the correct model
     template without conflicting with manually-crafted [INST] tokens.
     The /no_think suffix disables chain-of-thought for qwen3 models.
+
+    RAG context is injected only into the latest user turn — the conversation
+    history is passed through verbatim so the model can resolve references
+    like "translate the previous answer".
     """
     context = "\n\n---\n\n".join(context_chunks) if context_chunks else "(no context)"
     user_content = (
@@ -32,6 +62,7 @@ def build_messages(context_chunks: list[str], question: str) -> list[dict]:
     )
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
+        *_sanitize_history(history),
         {"role": "user", "content": user_content},
     ]
 

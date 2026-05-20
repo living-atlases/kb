@@ -49,7 +49,11 @@ class KbClient {
   /// RAG chat — streams text tokens from the server via SSE.
   ///
   /// Each yielded [String] is a text token. Throws [KbException] on error.
-  Stream<String> chat(String question) async* {
+  /// [history] is the prior conversation as `[{role: user|assistant, content: ...}]`.
+  Stream<String> chat(
+    String question, {
+    List<Map<String, String>> history = const [],
+  }) async* {
     final uri = Uri.parse('${config.baseUrl}/api/chat');
     final request = http.Request('POST', uri)
       ..headers['Content-Type'] = 'application/json'
@@ -57,6 +61,7 @@ class KbClient {
         'question': question,
         'collection': config.collection,
         'n_results': config.nResults,
+        'history': history,
       });
 
     final streamedResponse = await _http.send(request);
