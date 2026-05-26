@@ -28,6 +28,16 @@
         - ../server/chat.py
         - ../server/mcp_http.py
         - ../server/mcp_stdio.py
+        - ../server/repos.py
+
+    - name: Copy repos manifest
+      ansible.builtin.copy:
+        src: repos.yml
+        dest: "{{ kb_home }}/config/repos.yml"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0644"
+      tags: [repos]
 
     - name: Install/update server Python dependencies
       ansible.builtin.pip:
@@ -92,6 +102,7 @@
       loop:
         - la-toolkit-kb-api
         - la-toolkit-kb-mcp
+      tags: [repos]
 
     - name: Install nginx
       ansible.builtin.apt:
