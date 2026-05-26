@@ -41,3 +41,55 @@ class CollectionInfo {
         count: json['count'] as int,
       );
 }
+
+class RepoEntry {
+  final String org;
+  final String name;
+  final String url;
+  final String? description;
+
+  const RepoEntry({
+    required this.org,
+    required this.name,
+    required this.url,
+    this.description,
+  });
+
+  String get key => '$org/$name';
+}
+
+class ReposManifest {
+  final List<RepoEntry> repos;
+  final Set<String> tier1Keys;
+
+  const ReposManifest({required this.repos, required this.tier1Keys});
+
+  factory ReposManifest.fromJson(Map<String, dynamic> json) {
+    final repos = <RepoEntry>[];
+    final orgs = (json['orgs'] as Map?) ?? const {};
+    orgs.forEach((org, cfg) {
+      final m = cfg as Map<String, dynamic>;
+      final baseUrl = (m['base_url'] as String).replaceAll(RegExp(r'/+$'), '');
+      for (final r in (m['repos'] as List)) {
+        final entry = r as Map<String, dynamic>;
+        final name = entry['name'] as String;
+        repos.add(RepoEntry(
+          org: org as String,
+          name: name,
+          url: '$baseUrl/$name',
+          description: entry['description'] as String?,
+        ));
+      }
+    });
+    final tier1 = ((json['tier1'] as List?) ?? const [])
+        .map((e) => e as String)
+        .toSet();
+    return ReposManifest(repos: repos, tier1Keys: tier1);
+  }
+
+  List<RepoEntry> get tier1 =>
+      repos.where((r) => tier1Keys.contains(r.key)).toList();
+
+  List<RepoEntry> get others =>
+      repos.where((r) => !tier1Keys.contains(r.key)).toList();
+}

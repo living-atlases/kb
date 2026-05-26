@@ -68,8 +68,8 @@ class _KbHomePageState extends State<KbHomePage>
           unselectedLabelColor: colorScheme.onPrimary.withOpacity(0.7),
           indicatorColor: colorScheme.onPrimary,
           tabs: const [
-            Tab(icon: Icon(Icons.chat), text: 'Chat'),
             Tab(icon: Icon(Icons.info_outline), text: 'About'),
+            Tab(icon: Icon(Icons.chat), text: 'Chat'),
           ],
         ),
       ),
@@ -77,8 +77,8 @@ class _KbHomePageState extends State<KbHomePage>
         controller: _tc,
         physics: const NeverScrollableScrollPhysics(),
         children: [
-          KbChatWidget(config: _config),
           const _AboutTab(),
+          KbChatWidget(config: _config),
         ],
       ),
     );
@@ -95,8 +95,26 @@ class _KbHomePageState extends State<KbHomePage>
 // About Tab
 // ---------------------------------------------------------------------------
 
-class _AboutTab extends StatelessWidget {
+class _AboutTab extends StatefulWidget {
   const _AboutTab();
+
+  @override
+  State<_AboutTab> createState() => _AboutTabState();
+}
+
+class _AboutTabState extends State<_AboutTab> {
+  static const _config = KbConfig(baseUrl: 'https://kb.l-a.site');
+  late Future<ReposManifest> _manifest;
+
+  @override
+  void initState() {
+    super.initState();
+    _manifest = _load();
+  }
+
+  Future<ReposManifest> _load() => KbClient(config: _config).listRepos();
+
+  void _retry() => setState(() => _manifest = _load());
 
   @override
   Widget build(BuildContext context) {
@@ -122,13 +140,35 @@ class _AboutTab extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodyLarge,
               ),
               const SizedBox(height: 32),
-              _SectionHeader(icon: Icons.star, title: 'Tier 1 Repositories'),
-              const SizedBox(height: 8),
-              const _RepoTable(repos: _tier1Repos),
-              const SizedBox(height: 32),
-              _SectionHeader(icon: Icons.storage, title: 'Tier 2 Repositories'),
-              const SizedBox(height: 8),
-              const _RepoTable(repos: _tier2Repos),
+              FutureBuilder<ReposManifest>(
+                future: _manifest,
+                builder: (context, snap) {
+                  if (snap.connectionState != ConnectionState.done) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 24),
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  }
+                  if (snap.hasError) {
+                    return _ReposError(error: snap.error!, onRetry: _retry);
+                  }
+                  final m = snap.data!;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _SectionHeader(
+                          icon: Icons.star, title: 'Tier 1 Repositories'),
+                      const SizedBox(height: 8),
+                      _RepoTable(repos: m.tier1),
+                      const SizedBox(height: 32),
+                      _SectionHeader(
+                          icon: Icons.storage, title: 'Other Repositories'),
+                      const SizedBox(height: 8),
+                      _RepoTable(repos: m.others),
+                    ],
+                  );
+                },
+              ),
               const SizedBox(height: 32),
               _SectionHeader(
                 icon: Icons.add_circle_outline,
@@ -140,6 +180,13 @@ class _AboutTab extends StatelessWidget {
               _SectionHeader(icon: Icons.api, title: 'API'),
               const SizedBox(height: 8),
               _ApiSection(),
+              const SizedBox(height: 32),
+              _SectionHeader(
+                icon: Icons.hub,
+                title: 'MCP Integration',
+              ),
+              const SizedBox(height: 8),
+              const _McpSection(),
               const SizedBox(height: 48),
             ],
           ),
@@ -178,88 +225,23 @@ class _SectionHeader extends StatelessWidget {
 // Repo tables
 // ---------------------------------------------------------------------------
 
-class _RepoRow {
-  final String org;
-  final String repo;
-  final String description;
-
-  const _RepoRow(this.org, this.repo, this.description);
-
-  String get url => 'https://github.com/$org/$repo';
-}
-
-const _tier1Repos = [
-  _RepoRow('AtlasOfLivingAustralia', 'ala-install',
-      'Ansible playbooks for full ALA stack deployment'),
-  _RepoRow('living-atlases', 'la-toolkit',
-      'LA Toolkit — management UI for Living Atlas nodes'),
-  _RepoRow('gbif', 'pipelines',
-      'GBIF/ALA data processing pipelines (Beam + Spark)'),
-];
-
-const _tier2Repos = [
-  _RepoRow('AtlasOfLivingAustralia', 'collectory',
-      'Metadata registry for collections and data providers'),
-  _RepoRow('AtlasOfLivingAustralia', 'biocache-service',
-      'Occurrence record search and retrieval API'),
-  _RepoRow('AtlasOfLivingAustralia', 'biocache-hubs',
-      'Grails web app for occurrence search UI'),
-  _RepoRow('AtlasOfLivingAustralia', 'ala-bie-hub',
-      'Species pages hub (Grails)'),
-  _RepoRow('AtlasOfLivingAustralia', 'spatial-hub',
-      'Spatial portal front-end'),
-  _RepoRow('AtlasOfLivingAustralia', 'spatial-service',
-      'Spatial analysis back-end service'),
-  _RepoRow('AtlasOfLivingAustralia', 'image-service',
-      'Image storage, serving, and metadata'),
-  _RepoRow('AtlasOfLivingAustralia', 'species-list-webapp',
-      'Species list management service'),
-  _RepoRow('AtlasOfLivingAustralia', 'ala-auth-plugin',
-      'CAS authentication plugin'),
-  _RepoRow('AtlasOfLivingAustralia', 'userdetails',
-      'User profile and roles service'),
-  _RepoRow('AtlasOfLivingAustralia', 'alerts',
-      'User alert/notification service'),
-  _RepoRow('AtlasOfLivingAustralia', 'data-quality-filter-service',
-      'Data quality assertion and filtering'),
-  _RepoRow('AtlasOfLivingAustralia', 'logger-service',
-      'Download/usage event logging'),
-  _RepoRow('AtlasOfLivingAustralia', 'doi-service',
-      'DOI minting service for datasets'),
-  _RepoRow('AtlasOfLivingAustralia', 'ala-hub',
-      'Occurrence search web application'),
-  _RepoRow('AtlasOfLivingAustralia', 'ala-namematching-service',
-      'Taxon name matching microservice'),
-  _RepoRow('AtlasOfLivingAustralia', 'sensitive-data-service',
-      'Sensitive species data generalisation'),
-  _RepoRow('living-atlases', 'generator-living-atlas',
-      'Yeoman generator for LA node configuration'),
-  _RepoRow('living-atlases', 'la-pipelines',
-      'LA-specific GBIF pipelines extensions'),
-  _RepoRow('living-atlases', 'la-streams',
-      'Real-time streaming data pipeline (LA)'),
-  _RepoRow('gbif', 'gbif-configuration',
-      'GBIF production ansible/config reference'),
-  _RepoRow('gbif', 'registry',
-      'GBIF registry service (datasets, organisations)'),
-  _RepoRow('gbif', 'checklistbank',
-      'Checklist Bank — taxonomic data store'),
-  _RepoRow('gbif', 'occurrence',
-      'GBIF occurrence store and API'),
-  _RepoRow('gbif', 'maps',
-      'GBIF map tile service'),
-  _RepoRow('gbif', 'geocode',
-      'Reverse geocoding for occurrence data'),
-];
-
 class _RepoTable extends StatelessWidget {
-  final List<_RepoRow> repos;
+  final List<RepoEntry> repos;
 
   const _RepoTable({required this.repos});
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    if (repos.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: Text(
+          'No repositories.',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      );
+    }
     return Card(
       elevation: 0,
       shape: RoundedRectangleBorder(
@@ -290,8 +272,8 @@ class _RepoTable extends StatelessWidget {
               TableRow(
                 children: [
                   _td(context, r.org),
-                  _tdLink(context, r.repo, r.url),
-                  _td(context, r.description),
+                  _tdLink(context, r.name, r.url),
+                  _td(context, r.description ?? ''),
                 ],
               ),
           ],
@@ -326,6 +308,40 @@ class _RepoTable extends StatelessWidget {
       );
 }
 
+class _ReposError extends StatelessWidget {
+  final Object error;
+  final VoidCallback onRetry;
+
+  const _ReposError({required this.error, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: Theme.of(context).colorScheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline,
+                color: Theme.of(context).colorScheme.onErrorContainer),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Could not load repository list: $error',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+              ),
+            ),
+            TextButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Add Repo section
 // ---------------------------------------------------------------------------
@@ -344,21 +360,25 @@ class _AddRepoSection extends StatelessWidget {
           children: [
             Text(
               'To add a repository to the KB, open a Pull Request editing '
-              'repos_tier2.yml in the living-atlas-kb repo. Each entry needs:',
+              'ansible/repos.yml in the living-atlas-kb repo. Add the repo '
+              'name under its org:',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
             const SizedBox(height: 12),
             _CodeBlock('''
-- org: AtlasOfLivingAustralia
-  repo: my-service
-  description: Short description of the service
-  branch: master          # optional, defaults to main
-  paths:                  # optional glob filters
-    - "**/*.yml"
-    - "**/*.md"'''),
+orgs:
+  AtlasOfLivingAustralia:
+    base_url: https://github.com/AtlasOfLivingAustralia
+    repos:
+      - my-service                     # simple entry
+      - name: my-service               # entry with overrides
+        branch: develop
+        description: Short description'''),
             const SizedBox(height: 12),
             Text(
-              'Tier 1 repos are indexed daily. Tier 2 repos are indexed weekly.',
+              'Tier 1 repos are indexed first during initial setup. All repos '
+              'are then re-indexed on demand by the watcher (hourly poll of '
+              'commit feeds).',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -388,6 +408,145 @@ class _CodeBlock extends StatelessWidget {
         style: const TextStyle(
           fontFamily: 'monospace',
           fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MCP section
+// ---------------------------------------------------------------------------
+
+class _McpSection extends StatelessWidget {
+  const _McpSection();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Connect any MCP-capable AI assistant to query the KB directly.',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 16),
+        const _McpCard(
+          tool: 'Claude Desktop',
+          file: 'claude_desktop_config.json',
+          hint:
+              'macOS: ~/Library/Application Support/Claude/\n'
+              'Windows: %APPDATA%\\Claude\\\n'
+              'Linux: ~/.config/Claude/',
+          code: '{\n'
+              '  "mcpServers": {\n'
+              '    "living-atlas-kb": {\n'
+              '      "type": "http",\n'
+              '      "url": "https://kb.l-a.site/mcp"\n'
+              '    }\n'
+              '  }\n'
+              '}',
+        ),
+        const SizedBox(height: 8),
+        const _McpCard(
+          tool: 'OpenCode / Claude Code',
+          file: '~/.config/opencode/opencode.json',
+          code: '{\n'
+              '  "mcp": {\n'
+              '    "servers": {\n'
+              '      "living-atlas-kb": {\n'
+              '        "type": "http",\n'
+              '        "url": "https://kb.l-a.site/mcp"\n'
+              '      }\n'
+              '    }\n'
+              '  }\n'
+              '}',
+        ),
+        const SizedBox(height: 8),
+        const _McpCard(
+          tool: 'Cursor',
+          file: '.cursor/mcp.json',
+          code: '{\n'
+              '  "mcpServers": {\n'
+              '    "living-atlas-kb": {\n'
+              '      "type": "http",\n'
+              '      "url": "https://kb.l-a.site/mcp"\n'
+              '    }\n'
+              '  }\n'
+              '}',
+        ),
+        const SizedBox(height: 8),
+        const _McpCard(
+          tool: 'VS Code (GitHub Copilot)',
+          file: '.vscode/settings.json',
+          code: '{\n'
+              '  "github.copilot.chat.mcp.servers": {\n'
+              '    "living-atlas-kb": {\n'
+              '      "type": "http",\n'
+              '      "url": "https://kb.l-a.site/mcp"\n'
+              '    }\n'
+              '  }\n'
+              '}',
+        ),
+      ],
+    );
+  }
+}
+
+class _McpCard extends StatelessWidget {
+  final String tool;
+  final String file;
+  final String code;
+  final String? hint;
+
+  const _McpCard({
+    required this.tool,
+    required this.file,
+    required this.code,
+    this.hint,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              tool,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleSmall
+                  ?.copyWith(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              file,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
+                    color: colorScheme.primary,
+                  ),
+            ),
+            if (hint != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                hint!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            _CodeBlock(code),
+          ],
         ),
       ),
     );

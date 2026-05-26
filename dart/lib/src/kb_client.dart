@@ -46,6 +46,17 @@ class KbClient {
         .toList();
   }
 
+  /// Fetch the repository manifest (orgs, repos, tier1) from the server.
+  Future<ReposManifest> listRepos() async {
+    final uri = Uri.parse('${config.baseUrl}/api/repos');
+    final response = await _http.get(uri);
+    if (response.statusCode != 200) {
+      throw KbException('Repos failed: ${response.statusCode}');
+    }
+    return ReposManifest.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   /// RAG chat — streams text tokens from the server via SSE.
   ///
   /// Each yielded [String] is a text token. Throws [KbException] on error.
