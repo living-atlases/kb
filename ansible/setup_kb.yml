@@ -3,12 +3,12 @@
 # Adapted from la-toolkit-kb-setup.yml (prod-gbif-es-ansible-extras)
 #
 # Usage:
-#   Full setup + tier1:
+#   Full setup + initial index:
 #     ansible-playbook ansible/setup_kb.yml -i inventory.ini
-#   Full setup + tier1 + tier2:
-#     ansible-playbook ansible/setup_kb.yml -i inventory.ini -e "index_tier2=true"
 #   Re-index only (skip setup phases):
 #     ansible-playbook ansible/setup_kb.yml -i inventory.ini --tags reindex
+#   Re-index a single repo:
+#     ansible-playbook ansible/setup_kb.yml -i inventory.ini --tags reindex -e "reindex_repo=AtlasOfLivingAustralia/collectory"
 
 - name: Living Atlas KB - VM Setup & Indexing
   hosts: kb
@@ -20,7 +20,7 @@
     kb_domain: kb.l-a.site              # override: -e "kb_domain=kb.myatlas.org"
     rest_api_port: 8080
     mcp_http_port: 3000
-    index_tier2: false                   # override: -e "index_tier2=true"
+    reindex_repo: ""                     # override: -e "reindex_repo=ORG/NAME" to re-index one repo
 
   tasks:
 
@@ -123,7 +123,7 @@
         - ../server/mcp_http.py
         - ../server/mcp_stdio.py
 
-    # ── Phase 7: KB indexer script ────────────────────────────────────────────
+    # ── Phase 7: KB indexer + watcher scripts ────────────────────────────────
 
     - name: "Phase 7: Install kb_indexer.py"
       ansible.builtin.copy:
@@ -133,26 +133,45 @@
         group: "{{ kb_user }}"
         mode: "0755"
 
+    - name: "Phase 7b: Install kb_watcher.py"
+      ansible.builtin.copy:
+        src: kb_watcher.py
+        dest: "{{ kb_home }}/scripts/kb_watcher.py"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+
     # ── Phase 8: Index KB ─────────────────────────────────────────────────────
 
-    - name: "Phase 8: Index Tier 1 repos"
+    - name: "Phase 8: Index tier1 repos (initial setup)"
       ansible.builtin.shell: |
         source {{ kb_home }}/venv/bin/activate
         cd {{ kb_home }}
-        python3 scripts/kb_indexer.py tier1
+        python3 scripts/kb_indexer.py --tier1
       become_user: "{{ kb_user }}"
       timeout: 3600
+      when: reindex_repo == ""
       tags: [reindex, reindex_tier1]
 
-    - name: "Index Tier 2 repos (optional)"
+    - name: "Phase 8b: Index all repos (full re-index)"
       ansible.builtin.shell: |
         source {{ kb_home }}/venv/bin/activate
         cd {{ kb_home }}
-        python3 scripts/kb_indexer.py tier2
+        python3 scripts/kb_indexer.py --all
       become_user: "{{ kb_user }}"
       timeout: 10800
-      when: index_tier2 | bool
-      tags: [reindex, reindex_tier2]
+      when: reindex_repo == ""
+      tags: [reindex_all]
+
+    - name: "Phase 8c: Index single repo"
+      ansible.builtin.shell: |
+        source {{ kb_home }}/venv/bin/activate
+        cd {{ kb_home }}
+        python3 scripts/kb_indexer.py --repo {{ reindex_repo }}
+      become_user: "{{ kb_user }}"
+      timeout: 1800
+      when: reindex_repo != ""
+      tags: [reindex]
 
     # ── Phase 9: Cron jobs ────────────────────────────────────────────────────
 
@@ -161,11 +180,9 @@
         dest: /etc/cron.d/la-toolkit-kb
         mode: "0644"
         content: |
-          # Living Atlas KB maintenance jobs
-          # Tier 1: Daily at 02:00 (ala-install, la-toolkit, gbif-pipelines)
-          0 2 * * * {{ kb_user }} source {{ kb_home }}/venv/bin/activate && python3 {{ kb_home }}/scripts/kb_indexer.py tier1 >> {{ kb_home }}/logs/cron_tier1.log 2>&1
-          # Tier 2: Weekly Sunday at 03:00 (all LA/GBIF service repos)
-          0 3 * * 0 {{ kb_user }} source {{ kb_home }}/venv/bin/activate && python3 {{ kb_home }}/scripts/kb_indexer.py tier2 >> {{ kb_home }}/logs/cron_tier2.log 2>&1
+          # Living Atlas KB — hourly watcher
+          # Polls GitHub Atom feeds; re-indexes repos only when new commits detected.
+          0 * * * * {{ kb_user }} source {{ kb_home }}/venv/bin/activate && python3 {{ kb_home }}/scripts/kb_watcher.py >> {{ kb_home }}/logs/watcher.log 2>&1
 
     # ── Phase 10: Systemd services ────────────────────────────────────────────
 
