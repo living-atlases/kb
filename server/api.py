@@ -12,8 +12,10 @@ from pydantic import BaseModel, Field
 
 try:
     from chat import build_messages, stream_ollama
+    from repos import load_manifest
 except ImportError:
     from server.chat import build_messages, stream_ollama
+    from server.repos import load_manifest
 
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "/opt/la-toolkit-kb/data/chromadb/")
 
@@ -194,6 +196,17 @@ def list_collections():
     return CollectionsResponse(collections=[
         CollectionInfo(name=c.name, count=c.count()) for c in cols
     ])
+
+
+@app.get("/api/repos")
+def list_repos():
+    """Return the repository manifest (orgs, repos, tier1) as JSON.
+
+    The Flutter About tab reads this so the visible repo list always matches
+    the YAML manifest the indexer uses — no Flutter rebuild required when
+    repos.yml changes.
+    """
+    return load_manifest()
 
 
 async def _chat_sse_generator(req: ChatRequest):
