@@ -134,14 +134,34 @@
         delete: true
         recursive: true
 
-    - name: Configure nginx — serve Flutter web + proxy /api/ to backend
+    # The backend terminates TLS itself with its own Let's Encrypt cert
+    # (renewed by certbot.timer). `listen 443 ssl` fails `nginx -t` and leaves
+    # nginx down if the cert is missing, so assert it exists before writing the
+    # site. The Apache edge proxies https→443 to this backend.
+    - name: Check Let's Encrypt certificate is present
+      ansible.builtin.stat:
+        path: /etc/letsencrypt/live/{{ kb_domain }}/fullchain.pem
+      register: kb_cert
+
+    - name: Fail clearly if the TLS certificate is missing
+      ansible.builtin.assert:
+        that: kb_cert.stat.exists
+        fail_msg: >-
+          Missing /etc/letsencrypt/live/{{ kb_domain }}/fullchain.pem on the backend.
+          Obtain the cert (certbot) before deploying the 443 ssl nginx site, or
+          nginx will fail to start.
+
+    - name: Configure nginx — serve Flutter web over TLS + proxy /api/ to backend
       ansible.builtin.copy:
         dest: /etc/nginx/sites-available/kb
         mode: "0644"
         content: |
           server {
-              listen 80;
+              listen 443 ssl;
               server_name {{ kb_domain }};
+
+              ssl_certificate     /etc/letsencrypt/live/{{ kb_domain }}/fullchain.pem;
+              ssl_certificate_key /etc/letsencrypt/live/{{ kb_domain }}/privkey.pem;
 
               root /var/www/la-toolkit-kb;
               index index.html;
@@ -160,10 +180,35 @@
                   chunked_transfer_encoding on;
               }
 
+              # Health check on the REST API backend
+              location /health {
+                  proxy_pass http://127.0.0.1:8080;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+              }
+
+              # MCP streamable-HTTP server
+              location /mcp {
+                  proxy_pass http://127.0.0.1:3000;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header Connection "";
+                  proxy_http_version 1.1;
+                  proxy_buffering off;
+                  proxy_cache off;
+                  chunked_transfer_encoding on;
+              }
+
               # Serve Flutter web SPA — fallback to index.html
               location / {
                   try_files $uri $uri/ /index.html;
               }
+          }
+
+          server {
+              listen 80;
+              server_name {{ kb_domain }};
+              return 301 https://$host$request_uri;
           }
 
     - name: Enable nginx site
@@ -177,9 +222,32 @@
         path: /etc/nginx/sites-enabled/default
         state: absent
 
+    # A manually-created `la-toolkit-kb` site also binds :443 for this domain.
+    # `kb` is now the single canonical 443-ssl site, so remove the duplicate to
+    # avoid two server blocks competing for the same listen/server_name.
+    - name: Remove duplicate la-toolkit-kb nginx site
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/nginx/sites-enabled/la-toolkit-kb
+        - /etc/nginx/sites-available/la-toolkit-kb
+
     - name: Enable and restart nginx
       ansible.builtin.systemd:
         name: nginx
         enabled: true
         state: restarted
         daemon_reload: true
+
+    # Root cause of a past outage: UFW (default inbound DENY) allowed 80 but not
+    # 443, so the Apache edge's https→443 proxy was silently dropped and the site
+    # went blank. Codify both rules so the firewall never drifts again.
+    - name: Allow HTTP/HTTPS through UFW
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "80"
+        - "443"
