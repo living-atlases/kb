@@ -15,12 +15,15 @@ orgs:
     repos:
       - ala-install
       - collectory
-      - biocache-service
+      - name: biocache-service
+        wiki: true
       - biocache-hubs
       - ala-bie-hub
-      - bie-index
+      - name: bie-index
+        wiki: true
       - atlas-index
-      - image-service
+      - name: image-service
+        wiki: true
       - specieslist-webapp
       - species-lists
       - authoritative-lists
@@ -35,12 +38,23 @@ orgs:
       - doi-service
       - userdetails
       - ala-cas-5
-      - volunteer-portal
-      - ecodata
-      - profile-hub
-      - fieldcapture
-      - biocollect
+      - name: volunteer-portal
+        wiki: true
+      - name: ecodata
+        wiki: true
+      - name: profile-hub
+        wiki: true
+      - name: fieldcapture
+        wiki: true
+      - name: biocollect
+        wiki: true
       - commonui-bs5-2024
+      - name: documentation
+        wiki: true
+        description: "ALA documentation hub (wiki holds 144+ pages)"
+      - name: pipelines
+        branch: develop
+        description: "ALA fork of GBIF pipelines (la-pipelines / livingatlas)"
 
   living-atlases:
     base_url: https://github.com/living-atlases
@@ -54,12 +68,15 @@ orgs:
     repos:
       - name: pipelines
         description: "GBIF Pipelines — DarwinCore data processing (livingatlas module)"
-      - ipt
+        wiki: true
+      - name: ipt
+        wiki: true
       - gbif-api
       - dwca-validator
       - dwca-io
       - occurrence
-      - registry
+      - name: registry
+        wiki: true
       - checklistbank
 
 # Repos indexed first during setup (priority order).

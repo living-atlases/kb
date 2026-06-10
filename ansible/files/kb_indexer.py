@@ -59,7 +59,11 @@ def load_manifest() -> dict:
 
 
 def expand_repos(manifest: dict) -> list[dict]:
-    """Return list of repo dicts: {org, name, url, branch, description}."""
+    """Return list of repo dicts: {org, name, url, branch, description, is_wiki}.
+
+    Repos flagged `wiki: true` emit two entries: the code repo and a virtual
+    `{name}.wiki` entry pointing at `{base_url}/{name}.wiki.git`.
+    """
     repos = []
     for org, org_cfg in manifest.get("orgs", {}).items():
         base_url = org_cfg["base_url"].rstrip("/")
@@ -69,10 +73,12 @@ def expand_repos(manifest: dict) -> list[dict]:
                 name = entry
                 branch = default_branch
                 description = ""
+                has_wiki = False
             else:
                 name = entry["name"]
                 branch = entry.get("branch", default_branch)
                 description = entry.get("description", "")
+                has_wiki = bool(entry.get("wiki", False))
             repos.append(
                 {
                     "org": org,
@@ -80,8 +86,20 @@ def expand_repos(manifest: dict) -> list[dict]:
                     "url": f"{base_url}/{name}.git",
                     "branch": branch,
                     "description": description,
+                    "is_wiki": False,
                 }
             )
+            if has_wiki:
+                repos.append(
+                    {
+                        "org": org,
+                        "name": f"{name}.wiki",
+                        "url": f"{base_url}/{name}.wiki.git",
+                        "branch": "master",
+                        "description": f"GitHub wiki for {org}/{name}",
+                        "is_wiki": True,
+                    }
+                )
     return repos
 
 
@@ -224,7 +242,13 @@ def run(repos: list[dict], blocklist: list[str]) -> None:
             _, _ = clone_or_pull(repo_meta)
             total += index_repo(repo_meta, collection, blocklist)
         except Exception as exc:
-            log.error("%s/%s: failed — %s", repo_meta["org"], repo_meta["name"], exc)
+            if repo_meta.get("is_wiki"):
+                log.warning(
+                    "%s/%s: wiki not available or empty — skipping (%s)",
+                    repo_meta["org"], repo_meta["name"], exc,
+                )
+            else:
+                log.error("%s/%s: failed — %s", repo_meta["org"], repo_meta["name"], exc)
     log.info("Done. Total chunks indexed: %d", total)
 
 

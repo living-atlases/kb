@@ -64,17 +64,38 @@ def save_state(state: dict) -> None:
 # ── Manifest helpers ──────────────────────────────────────────────────────────
 
 def expand_repos(manifest: dict) -> list[dict]:
+    """Return repo entries plus virtual `{name}.wiki` entries for wiki: true repos.
+
+    Wiki entries are marked is_wiki=True and carry the wiki clone URL — the
+    Atom feed does not exist for wikis, so the watcher uses `git ls-remote`
+    against `wiki_url` instead.
+    """
     repos = []
     for org, org_cfg in manifest.get("orgs", {}).items():
+        base_url = org_cfg["base_url"].rstrip("/")
         default_branch = org_cfg.get("branch_default", "master")
         for entry in org_cfg.get("repos", []):
             if isinstance(entry, str):
                 name = entry
                 branch = default_branch
+                has_wiki = False
             else:
                 name = entry["name"]
                 branch = entry.get("branch", default_branch)
-            repos.append({"org": org, "name": name, "branch": branch})
+                has_wiki = bool(entry.get("wiki", False))
+            repos.append(
+                {"org": org, "name": name, "branch": branch, "is_wiki": False, "wiki_url": None}
+            )
+            if has_wiki:
+                repos.append(
+                    {
+                        "org": org,
+                        "name": f"{name}.wiki",
+                        "branch": "master",
+                        "is_wiki": True,
+                        "wiki_url": f"{base_url}/{name}.wiki.git",
+                    }
+                )
     return repos
 
 
@@ -112,6 +133,33 @@ def fetch_latest_sha(org: str, name: str, branch: str) -> str | None:
 
     # id text ends with the full commit SHA after the last "/"
     return id_el.text.rsplit("/", 1)[-1].strip()
+
+
+def fetch_latest_wiki_sha(org: str, name: str, wiki_url: str) -> str | None:
+    """Return HEAD SHA of a GitHub wiki via `git ls-remote`. None on failure.
+
+    Wikis have no commit Atom feed, so we shell out to git. One network call
+    per wiki per cycle. An empty/disabled wiki returns nothing -> None.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", wiki_url, "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=REQUEST_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        log.warning("%s/%s: ls-remote timed out", org, name)
+        return None
+    except Exception as e:
+        log.warning("%s/%s: ls-remote error — %s", org, name, e)
+        return None
+
+    if result.returncode != 0 or not result.stdout.strip():
+        log.debug("%s/%s: wiki empty or unreachable", org, name)
+        return None
+
+    return result.stdout.split()[0].strip()
 
 
 # ── Indexer invocation ────────────────────────────────────────────────────────
@@ -161,7 +209,10 @@ def main() -> None:
         org, name, branch = repo["org"], repo["name"], repo["branch"]
         key = f"{org}/{name}"
 
-        sha = fetch_latest_sha(org, name, branch)
+        if repo.get("is_wiki"):
+            sha = fetch_latest_wiki_sha(org, name, repo["wiki_url"])
+        else:
+            sha = fetch_latest_sha(org, name, branch)
         if sha is None:
             errors += 1
             continue
