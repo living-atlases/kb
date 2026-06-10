@@ -5,7 +5,7 @@ from mcp.server.fastmcp import FastMCP
 
 REST_API_URL = "http://localhost:8080"
 
-mcp = FastMCP("living-atlas-kb")
+mcp = FastMCP("living-atlas-kb", host="127.0.0.1", port=3000)
 
 
 async def handle_query(arguments: dict, http_client=None) -> str:
@@ -72,4 +72,4 @@ async def list_ala_kb_collections() -> str:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=3000)
+    mcp.run(transport="streamable-http")
