@@ -16,6 +16,10 @@
   vars:
     kb_home: /opt/la-toolkit-kb          # override for different install path
     kb_user: ubuntu                      # service user on target host
+    # Offload the large, growing KB dirs (data/chromadb + cloned repos) onto a
+    # secondary disk via bind-mounts, keeping the root filesystem from filling up.
+    # Set to "" to disable (keeps data/repos on the root disk under kb_home).
+    kb_offload_dir: /var/lib/ollama/kb   # parent must live on a mounted 2nd disk
     chroma_path: "{{ kb_home }}/data/chromadb/"
     kb_domain: kb.l-a.site              # override: -e "kb_domain=kb.myatlas.org"
     rest_api_port: 8080
@@ -46,6 +50,50 @@
           - python3-certbot-nginx
         state: present
 
+    # ── Phase 1b: Host disk hygiene (prevent root fs from filling up) ─────────
+
+    - name: "Phase 1b: Cap systemd journal size"
+      ansible.builtin.lineinfile:
+        path: /etc/systemd/journald.conf
+        regexp: '^#?SystemMaxUse='
+        line: 'SystemMaxUse=200M'
+      notify: Restart journald
+
+    - name: "Phase 1b: Cap auditd log rotation"
+      ansible.builtin.lineinfile:
+        path: /etc/audit/auditd.conf
+        regexp: "^{{ item.key }}\\s*="
+        line: "{{ item.key }} = {{ item.value }}"
+      loop:
+        - { key: "max_log_file", value: "50" }
+        - { key: "num_logs", value: "5" }
+        - { key: "max_log_file_action", value: "ROTATE" }
+      failed_when: false   # auditd may be absent on non-hardened hosts
+      notify: Restart auditd
+
+    - name: "Phase 1b: Remove orphaned ollama models on root disk"
+      # ollama is configured with OLLAMA_MODELS on the dedicated disk; the default
+      # ~ollama/.ollama/models path only holds stale pre-migration models.
+      ansible.builtin.file:
+        path: /usr/share/ollama/.ollama/models
+        state: absent
+
+    - name: "Phase 1b: Rotate KB watcher/indexer logs"
+      ansible.builtin.copy:
+        dest: /etc/logrotate.d/la-toolkit-kb
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          {{ kb_home }}/logs/*.log {
+              weekly
+              rotate 4
+              compress
+              missingok
+              notifempty
+              copytruncate
+          }
+
     # ── Phase 2: Directory structure ──────────────────────────────────────────
 
     - name: "Phase 2: Create directory structure"
@@ -65,6 +113,55 @@
         - "{{ kb_home }}/data/chromadb"
         - "{{ kb_home }}/logs"
 
+    # ── Phase 2b: Offload heavy data to secondary disk (keeps / from filling) ──
+    # data/chromadb (grows on every reindex) and repos (grows as sources are
+    # added) are bind-mounted onto a 2nd disk so the root fs never runs out.
+    - name: "Phase 2b: Check secondary disk for offload is mounted"
+      ansible.builtin.command: "mountpoint -q {{ kb_offload_dir | dirname }}"
+      register: kb_offload_mount
+      changed_when: false
+      failed_when: false
+      when: kb_offload_dir | length > 0
+
+    - name: "Phase 2b: Create offload target dirs on secondary disk"
+      ansible.builtin.file:
+        path: "{{ kb_offload_dir }}/{{ item }}"
+        state: directory
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+      loop:
+        - data
+        - repos
+      when:
+        - kb_offload_dir | length > 0
+        - kb_offload_mount.rc == 0
+
+    - name: "Phase 2b: Bind-mount data + repos onto secondary disk"
+      ansible.posix.mount:
+        path: "{{ kb_home }}/{{ item }}"
+        src: "{{ kb_offload_dir }}/{{ item }}"
+        fstype: none
+        opts: bind,nofail
+        state: mounted
+      loop:
+        - data
+        - repos
+      when:
+        - kb_offload_dir | length > 0
+        - kb_offload_mount.rc == 0
+
+    - name: "Phase 2b: Ensure chromadb dir exists on the mounted volume"
+      ansible.builtin.file:
+        path: "{{ kb_home }}/data/chromadb"
+        state: directory
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+      when:
+        - kb_offload_dir | length > 0
+        - kb_offload_mount.rc == 0
+
     # ── Phase 3: Python venv ──────────────────────────────────────────────────
 
     - name: "Phase 3: Create Python venv"
@@ -75,7 +172,7 @@
 
     - name: Upgrade pip in venv
       ansible.builtin.command:
-        cmd: "{{ kb_home }}/venv/bin/pip install --upgrade pip setuptools wheel"
+        cmd: "{{ kb_home }}/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel"
       become_user: "{{ kb_user }}"
       changed_when: false
 
@@ -95,6 +192,7 @@
           - pyyaml>=6.0
         state: present
         virtualenv: "{{ kb_home }}/venv"
+        extra_args: "--no-cache-dir"
       become_user: "{{ kb_user }}"
 
     # ── Phase 5: Repo configs ─────────────────────────────────────────────────
@@ -246,110 +344,36 @@
         group: www-data
         mode: "0755"
 
-    - name: Create intro index.html
-      ansible.builtin.copy:
-        dest: /var/www/la-toolkit-kb/index.html
-        owner: www-data
-        group: www-data
-        mode: "0644"
-        content: |
-          <!DOCTYPE html>
-          <html lang="en">
-          <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Living Atlas Knowledge Base</title>
-            <style>
-              body { font-family: system-ui, sans-serif; max-width: 720px; margin: 3rem auto; padding: 0 1rem; color: #222; }
-              h1 { color: #1a6c37; }
-              a { color: #1a6c37; }
-              code { background: #f4f4f4; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
-              .endpoints { border-collapse: collapse; width: 100%; }
-              .endpoints th, .endpoints td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ddd; }
-              .endpoints th { background: #f0f8f2; }
-            </style>
-          </head>
-          <body>
-            <h1>Living Atlas Knowledge Base</h1>
-            <p>
-              Semantic search API and MCP server over the
-              <a href="https://github.com/living-atlases">Living Atlases</a> /
-              <a href="https://github.com/gbif">GBIF</a> documentation corpus.
-            </p>
+    # NOTE: No static index.html is written here. The web root is served by the
+    # Flutter web build (deploy.yml builds + rsyncs dart/example/build/web/,
+    # including its own index.html). Writing a landing page here would overwrite
+    # the Flutter app's index.html and shadow the SPA. The API's own landing page
+    # still lives in server/api.py at "/" (reachable via the backend) without
+    # clobbering any served file.
 
-            <h2>Endpoints</h2>
-            <table class="endpoints">
-              <tr><th>URL</th><th>Description</th></tr>
-              <tr><td><a href="/api/docs"><code>/api/docs</code></a></td><td>Interactive REST API (Swagger UI)</td></tr>
-              <tr><td><code>/api/query</code></td><td>Semantic search — POST {"question":"…","n_results":5}</td></tr>
-              <tr><td><code>/api/collections</code></td><td>List indexed collections</td></tr>
-              <tr><td><code>/health</code></td><td>Health check</td></tr>
-              <tr><td><code>/mcp</code></td><td>MCP streamable-HTTP for AI agents</td></tr>
-            </table>
+    # ── Phase 11: nginx ───────────────────────────────────────────────────────
+    #
+    # nginx is NOT configured here. It is owned exclusively by deploy.yml, which
+    # writes a single 443-ssl site `kb` that:
+    #   - serves the Flutter web SPA from /var/www/la-toolkit-kb (try_files
+    #     $uri $uri/ /index.html),
+    #   - proxies /api/, /health and /mcp to the backend services,
+    #   - redirects port 80 → https.
+    #
+    # This backend terminates TLS itself with its own Let's Encrypt cert at
+    # /etc/letsencrypt/live/{{ kb_domain }}/ (renewed by certbot.timer); the
+    # upstream Apache edge proxies https→443 here. deploy.yml asserts the cert
+    # exists before writing the ssl site and opens 80/443 in UFW. Run
+    # `ansible-playbook ansible/deploy.yml` to (re)configure nginx + deploy the app.
 
-            <h2>Usage example</h2>
-            <pre><code>curl -s https://{{ kb_domain }}/api/query \
-              -H 'Content-Type: application/json' \
-              -d '{"question":"How to configure biocache-service?","n_results":3}' | jq .</code></pre>
+  handlers:
+    - name: Restart journald
+      ansible.builtin.systemd:
+        name: systemd-journald
+        state: restarted
 
-            <h2>Source</h2>
-            <p><a href="https://github.com/living-atlases/living-atlas-kb">github.com/living-atlases/living-atlas-kb</a></p>
-          </body>
-          </html>
-
-    # ── Phase 11: nginx + TLS ─────────────────────────────────────────────────
-
-    - name: "Phase 11: Configure nginx"
-      ansible.builtin.copy:
-        dest: /etc/nginx/sites-available/la-toolkit-kb
-        mode: "0644"
-        content: |
-          server {
-              listen 443 ssl;
-              server_name {{ kb_domain }};
-
-              ssl_certificate /etc/letsencrypt/live/{{ kb_domain }}/fullchain.pem;
-              ssl_certificate_key /etc/letsencrypt/live/{{ kb_domain }}/privkey.pem;
-
-              location /api/ {
-                  proxy_pass http://127.0.0.1:{{ rest_api_port }};
-                  proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-              }
-
-              location /mcp {
-                  proxy_pass http://127.0.0.1:{{ mcp_http_port }};
-                  proxy_set_header Host $host;
-                  proxy_set_header Connection "";
-                  proxy_http_version 1.1;
-                  proxy_buffering off;
-              }
-
-              location /health {
-                  proxy_pass http://127.0.0.1:{{ rest_api_port }};
-              }
-
-              root /var/www/la-toolkit-kb;
-              index index.html;
-
-              location / {
-                  try_files $uri $uri/ =404;
-              }
-          }
-
-          server {
-              listen 80;
-              server_name {{ kb_domain }};
-              return 301 https://$host$request_uri;
-          }
-
-    - name: Enable nginx site
-      ansible.builtin.file:
-        src: /etc/nginx/sites-available/la-toolkit-kb
-        dest: /etc/nginx/sites-enabled/la-toolkit-kb
-        state: link
-
-    - name: Reload nginx
-      ansible.builtin.service:
-        name: nginx
-        state: reloaded
+    - name: Restart auditd
+      # auditd cannot be restarted via systemctl on some hosts; service works.
+      ansible.builtin.command: service auditd restart
+      changed_when: true
+      failed_when: false
