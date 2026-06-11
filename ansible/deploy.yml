@@ -46,7 +46,7 @@
         name:
           - fastapi>=0.115
           - "uvicorn[standard]>=0.30"
-          - chromadb>=0.5
+          - "chromadb>=0.5,<1.0"
           - sentence-transformers>=3.0
           - "mcp>=1.27"
           - httpx>=0.27
