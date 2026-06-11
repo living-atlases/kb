@@ -60,7 +60,7 @@ orgs:
     base_url: https://github.com/living-atlases
     repos:
       - name: la-toolkit
-        branch: main
+        branch: master
       - base-branding
 
   gbif:
