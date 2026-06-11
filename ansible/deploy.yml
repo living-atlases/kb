@@ -68,6 +68,7 @@
           User={{ kb_user }}
           WorkingDirectory={{ kb_home }}
           Environment=CHROMA_PATH={{ kb_home }}/data/chromadb/
+          Environment=TOKENIZERS_PARALLELISM=false
           ExecStart={{ kb_home }}/venv/bin/python -m uvicorn server.api:app --host 127.0.0.1 --port 8080
           Restart=always
           RestartSec=5

@@ -1,6 +1,9 @@
 """FastAPI REST service for Living Atlas Knowledge Base."""
 
 import os
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 from contextlib import asynccontextmanager
 from typing import Optional
 
