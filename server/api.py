@@ -199,10 +199,16 @@ def query(req: QueryRequest):
 
 @app.get("/api/collections", response_model=CollectionsResponse)
 def list_collections():
-    cols = chroma_client.list_collections()
-    return CollectionsResponse(collections=[
-        CollectionInfo(name=c.name, count=c.count()) for c in cols
-    ])
+    stubs = chroma_client.list_collections()
+    result = []
+    for stub in stubs:
+        name = stub if isinstance(stub, str) else stub.name
+        try:
+            count = chroma_client.get_collection(name).count()
+        except Exception:
+            count = 0
+        result.append(CollectionInfo(name=name, count=count))
+    return CollectionsResponse(collections=result)
 
 
 @app.get("/api/repos")
