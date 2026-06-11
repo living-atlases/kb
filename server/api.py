@@ -9,6 +9,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sentence_transformers import SentenceTransformer
 
 try:
     from chat import build_messages, stream_ollama
@@ -18,14 +19,17 @@ except ImportError:
     from server.repos import load_manifest
 
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "/opt/la-toolkit-kb/data/chromadb/")
+EMBED_MODEL = "all-MiniLM-L6-v2"
 
 chroma_client: Optional[chromadb.PersistentClient] = None  # set on startup
+embed_model: Optional[SentenceTransformer] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global chroma_client
+    global chroma_client, embed_model
     chroma_client = chromadb.PersistentClient(path=CHROMA_PATH)
+    embed_model = SentenceTransformer(EMBED_MODEL)
     yield
 
 
@@ -170,7 +174,7 @@ def query(req: QueryRequest):
         raise HTTPException(status_code=404, detail=f"Collection '{req.collection}' not found")
 
     results = col.query(
-        query_texts=[req.question],
+        query_embeddings=embed_model.encode([req.question]).tolist(),
         n_results=req.n_results,
         include=["documents", "metadatas", "distances"],
     )
@@ -218,7 +222,7 @@ async def _chat_sse_generator(req: ChatRequest):
         return
 
     results = col.query(
-        query_texts=[req.question],
+        query_embeddings=embed_model.encode([req.question]).tolist(),
         n_results=req.n_results,
         include=["documents"],
     )
