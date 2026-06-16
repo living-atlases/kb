@@ -35,6 +35,9 @@ def app_client(mock_chroma_client):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "server"))
     import server.api as api_module
     api_module.chroma_client = mock_chroma_client
+    emb = MagicMock()
+    emb.encode.return_value.tolist.return_value = [[0.1, 0.2, 0.3]]
+    api_module.embed_model = emb
     from fastapi.testclient import TestClient
     return TestClient(api_module.app)
 

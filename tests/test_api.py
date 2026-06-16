@@ -34,14 +34,25 @@ def mock_client(mock_chroma):
 
 
 @pytest.fixture
-def test_client(mock_client):
+def mock_embed():
+    """Mock SentenceTransformer; embed_model.encode([...]).tolist() -> vectors."""
+    emb = MagicMock()
+    emb.encode.return_value.tolist.return_value = [[0.1, 0.2, 0.3]]
+    return emb
+
+
+@pytest.fixture
+def test_client(mock_client, mock_embed):
     import server.api as api_module
-    original = api_module.chroma_client
+    original_client = api_module.chroma_client
+    original_embed = api_module.embed_model
     api_module.chroma_client = mock_client
+    api_module.embed_model = mock_embed
     from server.api import app
     client = TestClient(app)
     yield client
-    api_module.chroma_client = original
+    api_module.chroma_client = original_client
+    api_module.embed_model = original_embed
 
 
 def test_query_returns_results(test_client, mock_chroma):
