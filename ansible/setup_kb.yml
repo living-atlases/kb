@@ -279,7 +279,7 @@
         mode: "0644"
         content: |
           # Living Atlas KB — hourly watcher
-          # Polls GitHub Atom feeds; re-indexes repos only when new commits detected.
+          # Polls each repo's default branch via git ls-remote; re-indexes only when new commits detected.
           0 * * * * {{ kb_user }} source {{ kb_home }}/venv/bin/activate && python3 {{ kb_home }}/scripts/kb_watcher.py >> {{ kb_home }}/logs/watcher.log 2>&1
 
     # ── Phase 10: Systemd services ────────────────────────────────────────────

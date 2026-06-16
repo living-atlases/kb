@@ -2,11 +2,12 @@
 # Single source of truth for all indexed repos.
 #
 # URL construction: {base_url}/{name}.git
-# Branch default: master (override per-repo with `branch:`)
+# Branch: the repo's default branch (HEAD) is auto-detected — no need to set it.
+#         Override per-repo with `branch:` only to index a NON-default branch.
 # To add a repo: add the name under its org. Open a PR.
 #
 # Tier1: repos indexed first during initial setup (not a scheduling distinction).
-# Scheduling is handled by kb_watcher.py (hourly RSS/Atom polling, re-index on change).
+# Scheduling is handled by kb_watcher.py (hourly git ls-remote polling, re-index on change).
 
 orgs:
 
@@ -37,7 +38,12 @@ orgs:
       - alerts
       - doi-service
       - userdetails
+      - apikey
+      - sds
       - ala-cas-5
+      - helm-charts
+      - data-quality-filter-service
+      - ala-hub
       - name: volunteer-portal
         wiki: true
       - name: ecodata
@@ -53,14 +59,12 @@ orgs:
         wiki: true
         description: "ALA documentation hub (wiki holds 144+ pages)"
       - name: pipelines
-        branch: develop
         description: "ALA fork of GBIF pipelines (la-pipelines / livingatlas)"
 
   living-atlases:
     base_url: https://github.com/living-atlases
     repos:
-      - name: la-toolkit
-        branch: master
+      - la-toolkit
       - base-branding
 
   gbif:
@@ -72,7 +76,6 @@ orgs:
       - name: ipt
         wiki: true
       - gbif-api
-      - dwca-validator
       - dwca-io
       - occurrence
       - name: registry
@@ -87,7 +90,10 @@ tier1:
   - gbif/pipelines
 
 # Global index blocklist — never indexed regardless of repo.
-# Add paths/patterns here to reduce noise across all repos.
+# Matching (see is_blocked in kb_indexer.py): a pattern ending in "/" matches any
+# single path *component* with that name (at any depth); otherwise it is an
+# fnmatch against the file *name*. Multi-segment paths (e.g. src/test/resources)
+# do NOT work — block the leaf component instead (e.g. "test/").
 blocklist:
   - ".git/"
   - "node_modules/"
@@ -95,6 +101,39 @@ blocklist:
   - "target/"
   - ".gradle/"
   - "molecule/"
+  # ── Test code & fixtures (huge noise: checklistbank test datasets were 45% of the index) ──
+  - "test/"
+  - "tests/"
+  - "datasets/"           # checklistbank-nub/src/test/resources/datasets/*-usages.json
+  - "testdata/"
+  - "test-data/"          # ecodata test fixtures (hyphenated variant of testdata/)
+  - "integration-test/"   # Grails src/integration-test (ecodata ~7k, fieldcapture ~3.6k: specs + JSON fixtures)
+  - "fixtures/"
+  # ── Vendored / generated front-end assets (Grails apps: volunteer-portal, ecodata, fieldcapture, biocollect) ──
+  - "vendor/"
+  - "bower_components/"
+  - "dist/"
+  - "coverage/"
+  - "out/"
+  # Grails asset-pipeline + legacy web-app resources: overwhelmingly vendored
+  # JS/CSS (jQuery, Bootstrap, DataTables…). On volunteer-portal these dirs were
+  # 24k of 26.6k chunks (~91%); blocking them keeps controllers/services/domain/
+  # views/taglib/conf source intact. Verified: 26617 → 4922 chunks, no source lost.
+  - "assets/"             # grails-app/assets (asset-pipeline: vendored+app JS/CSS/img)
+  - "javascripts/"        # Grails 2 web-app/javascripts (vendored)
+  - "js/"                 # Grails 2 web-app/js (vendored libs)
+  - "static-design/"      # static HTML design mockups
+  - "static/"             # built static-site / frontend output
+  - "i18n/"               # message bundles / translations (low semantic value, bulky)
+  - "forms/"              # fieldcapture form-definition JSON blobs (~18k chunks of config data)
+  - "*.min.js"
+  - "*.min.css"
+  - "*.bundle.js"
+  - "*-min.js"            # alt minified naming (foo-min.js)
+  - "*.map"
+  - "package-lock.json"   # generated npm lockfile (large, no doc value)
+  - "*-usages.json"       # checklistbank nub test fixtures
+  # ── Binaries / archives ──
   - "*.jar"
   - "*.class"
   - "*.pyc"

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-kb_watcher.py — Living Atlas KB RSS/Atom watcher
+kb_watcher.py — Living Atlas KB commit watcher
 
-Polls GitHub commit Atom feeds for all repos in config/repos.yml.
+Polls the latest commit SHA of every repo in config/repos.yml via
+`git ls-remote` (default branch / HEAD unless a branch override is set).
 Re-indexes a repo only when new commits are detected since the last run.
 
 State stored in: {KB_HOME}/data/watcher_state.json
@@ -16,9 +17,6 @@ import logging
 import os
 import subprocess
 import sys
-import urllib.error
-import urllib.request
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import yaml
@@ -31,7 +29,6 @@ STATE_FILE = KB_HOME / "data" / "watcher_state.json"
 INDEXER = KB_HOME / "scripts" / "kb_indexer.py"
 VENV_PYTHON = KB_HOME / "venv" / "bin" / "python3"
 
-ATOM_URL = "https://github.com/{org}/{name}/commits/{branch}.atom"
 REQUEST_TIMEOUT = 20  # seconds
 
 logging.basicConfig(
@@ -40,9 +37,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
 log = logging.getLogger("kb_watcher")
-
-# GitHub Atom NS
-ATOM_NS = "http://www.w3.org/2005/Atom"
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -66,14 +60,14 @@ def save_state(state: dict) -> None:
 def expand_repos(manifest: dict) -> list[dict]:
     """Return repo entries plus virtual `{name}.wiki` entries for wiki: true repos.
 
-    Wiki entries are marked is_wiki=True and carry the wiki clone URL — the
-    Atom feed does not exist for wikis, so the watcher uses `git ls-remote`
-    against `wiki_url` instead.
+    `branch` is None unless explicitly set; None means "use the remote's default
+    branch (HEAD)". Each entry carries the clone `url` so the watcher can poll
+    via `git ls-remote` — robust against per-repo branch-name differences.
     """
     repos = []
     for org, org_cfg in manifest.get("orgs", {}).items():
         base_url = org_cfg["base_url"].rstrip("/")
-        default_branch = org_cfg.get("branch_default", "master")
+        default_branch = org_cfg.get("branch_default")  # None → auto-detect HEAD
         for entry in org_cfg.get("repos", []):
             if isinstance(entry, str):
                 name = entry
@@ -84,66 +78,40 @@ def expand_repos(manifest: dict) -> list[dict]:
                 branch = entry.get("branch", default_branch)
                 has_wiki = bool(entry.get("wiki", False))
             repos.append(
-                {"org": org, "name": name, "branch": branch, "is_wiki": False, "wiki_url": None}
+                {
+                    "org": org,
+                    "name": name,
+                    "branch": branch,
+                    "is_wiki": False,
+                    "url": f"{base_url}/{name}.git",
+                }
             )
             if has_wiki:
                 repos.append(
                     {
                         "org": org,
                         "name": f"{name}.wiki",
-                        "branch": "master",
+                        "branch": None,
                         "is_wiki": True,
-                        "wiki_url": f"{base_url}/{name}.wiki.git",
+                        "url": f"{base_url}/{name}.wiki.git",
                     }
                 )
     return repos
 
 
-# ── Atom feed helpers ─────────────────────────────────────────────────────────
+# ── Commit SHA polling ────────────────────────────────────────────────────────
 
-def fetch_latest_sha(org: str, name: str, branch: str) -> str | None:
-    """Fetch the Atom feed and return the SHA of the most recent commit, or None on error."""
-    url = ATOM_URL.format(org=org, name=name, branch=branch)
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "la-kb-watcher/1.0"})
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            body = resp.read()
-    except urllib.error.HTTPError as e:
-        log.warning("%s/%s: HTTP %d fetching feed", org, name, e.code)
-        return None
-    except Exception as e:
-        log.warning("%s/%s: feed fetch error — %s", org, name, e)
-        return None
+def fetch_latest_sha(org: str, name: str, url: str, branch: str | None) -> str | None:
+    """Return the latest commit SHA via `git ls-remote`, or None on failure.
 
-    try:
-        root = ET.fromstring(body)
-    except ET.ParseError as e:
-        log.warning("%s/%s: feed parse error — %s", org, name, e)
-        return None
-
-    # First <entry> is the most recent commit.
-    # <id>tag:github.com,2008:Grit::Commit/SHA</id>
-    entry = root.find(f"{{{ATOM_NS}}}entry")
-    if entry is None:
-        return None
-
-    id_el = entry.find(f"{{{ATOM_NS}}}id")
-    if id_el is None or not id_el.text:
-        return None
-
-    # id text ends with the full commit SHA after the last "/"
-    return id_el.text.rsplit("/", 1)[-1].strip()
-
-
-def fetch_latest_wiki_sha(org: str, name: str, wiki_url: str) -> str | None:
-    """Return HEAD SHA of a GitHub wiki via `git ls-remote`. None on failure.
-
-    Wikis have no commit Atom feed, so we shell out to git. One network call
-    per wiki per cycle. An empty/disabled wiki returns nothing -> None.
+    `branch` None → query HEAD (the remote's default branch). Otherwise query
+    `refs/heads/{branch}`. One network call per repo per cycle. An empty or
+    unreachable repo/wiki returns nothing -> None.
     """
+    ref = "HEAD" if not branch else f"refs/heads/{branch}"
     try:
         result = subprocess.run(
-            ["git", "ls-remote", wiki_url, "HEAD"],
+            ["git", "ls-remote", url, ref],
             capture_output=True,
             text=True,
             timeout=REQUEST_TIMEOUT,
@@ -156,7 +124,7 @@ def fetch_latest_wiki_sha(org: str, name: str, wiki_url: str) -> str | None:
         return None
 
     if result.returncode != 0 or not result.stdout.strip():
-        log.debug("%s/%s: wiki empty or unreachable", org, name)
+        log.debug("%s/%s: empty or unreachable (ref=%s)", org, name, ref)
         return None
 
     return result.stdout.split()[0].strip()
@@ -209,10 +177,7 @@ def main() -> None:
         org, name, branch = repo["org"], repo["name"], repo["branch"]
         key = f"{org}/{name}"
 
-        if repo.get("is_wiki"):
-            sha = fetch_latest_wiki_sha(org, name, repo["wiki_url"])
-        else:
-            sha = fetch_latest_sha(org, name, branch)
+        sha = fetch_latest_sha(org, name, repo["url"], branch)
         if sha is None:
             errors += 1
             continue

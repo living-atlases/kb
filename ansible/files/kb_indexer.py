@@ -32,6 +32,7 @@ COLLECTION_NAME = os.environ.get("KB_COLLECTION", "la_toolkit_kb")
 
 CHUNK_SIZE = 800          # characters
 CHUNK_OVERLAP = 100
+UPSERT_BATCH = 512        # chunks per ChromaDB upsert (batched = far faster than 1-by-1)
 
 # Text file extensions to index (everything else skipped silently)
 TEXT_EXTENSIONS = {
@@ -41,6 +42,13 @@ TEXT_EXTENSIONS = {
     ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg", ".conf", ".properties",
     ".xml", ".html", ".gsp", ".sh", ".bash",
     ".sql", ".gradle",
+}
+
+# Extensionless text files worth indexing (CI/CD & build), matched by name/stem
+# so e.g. Dockerfile, Dockerfile.dev, Jenkinsfile, Makefile all qualify.
+TEXT_FILENAMES = {
+    "dockerfile", "containerfile", "jenkinsfile", "makefile",
+    "procfile", "vagrantfile",
 }
 
 logging.basicConfig(
@@ -61,13 +69,16 @@ def load_manifest() -> dict:
 def expand_repos(manifest: dict) -> list[dict]:
     """Return list of repo dicts: {org, name, url, branch, description, is_wiki}.
 
+    `branch` is None unless explicitly set (per-repo `branch:` or org-level
+    `branch_default`). None means "use the remote's default branch (HEAD)".
+
     Repos flagged `wiki: true` emit two entries: the code repo and a virtual
     `{name}.wiki` entry pointing at `{base_url}/{name}.wiki.git`.
     """
     repos = []
     for org, org_cfg in manifest.get("orgs", {}).items():
         base_url = org_cfg["base_url"].rstrip("/")
-        default_branch = org_cfg.get("branch_default", "master")
+        default_branch = org_cfg.get("branch_default")  # None → auto-detect HEAD
         for entry in org_cfg.get("repos", []):
             if isinstance(entry, str):
                 name = entry
@@ -95,7 +106,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                         "org": org,
                         "name": f"{name}.wiki",
                         "url": f"{base_url}/{name}.wiki.git",
-                        "branch": "master",
+                        "branch": None,
                         "description": f"GitHub wiki for {org}/{name}",
                         "is_wiki": True,
                     }
@@ -138,7 +149,11 @@ def clone_or_pull(repo_meta: dict) -> tuple[Repo, bool]:
             shutil.rmtree(dest)
 
     log.info("Cloning %s → %s", repo_meta["url"], dest)
-    repo = Repo.clone_from(repo_meta["url"], dest, branch=repo_meta["branch"], depth=1)
+    clone_kwargs = {"depth": 1}
+    if repo_meta.get("branch"):
+        clone_kwargs["branch"] = repo_meta["branch"]
+    # No branch → GitPython clones the remote's default branch (HEAD).
+    repo = Repo.clone_from(repo_meta["url"], dest, **clone_kwargs)
     return repo, True
 
 
@@ -184,10 +199,23 @@ def index_repo(
     org_name = f"{repo_meta['org']}/{repo_meta['name']}"
     count = 0
 
+    ids: list[str] = []
+    docs: list[str] = []
+    metas: list[dict] = []
+
+    def flush() -> None:
+        nonlocal ids, docs, metas
+        if not ids:
+            return
+        collection.upsert(ids=ids, documents=docs, metadatas=metas)
+        ids, docs, metas = [], [], []
+
     for file_path in repo_dir.rglob("*"):
         if not file_path.is_file():
             continue
-        if file_path.suffix.lower() not in TEXT_EXTENSIONS:
+        if (file_path.suffix.lower() not in TEXT_EXTENSIONS
+                and file_path.name.lower() not in TEXT_FILENAMES
+                and file_path.stem.lower() not in TEXT_FILENAMES):
             continue
         rel = file_path.relative_to(repo_dir)
         if is_blocked(rel, blocklist):
@@ -197,25 +225,24 @@ def index_repo(
         if not text or not text.strip():
             continue
 
-        chunks = chunk_text(text)
-        for i, chunk in enumerate(chunks):
+        for i, chunk in enumerate(chunk_text(text)):
             if not chunk.strip():
                 continue
-            doc_id = f"{org_name}:{rel}:{i}"
-            collection.upsert(
-                ids=[doc_id],
-                documents=[chunk],
-                metadatas=[
-                    {
-                        "repo": org_name,
-                        "org": repo_meta["org"],
-                        "file": str(rel),
-                        "chunk": i,
-                    }
-                ],
+            ids.append(f"{org_name}:{rel}:{i}")
+            docs.append(chunk)
+            metas.append(
+                {
+                    "repo": org_name,
+                    "org": repo_meta["org"],
+                    "file": str(rel),
+                    "chunk": i,
+                }
             )
             count += 1
+            if len(ids) >= UPSERT_BATCH:
+                flush()
 
+    flush()
     log.info("%s: indexed %d chunks", org_name, count)
     return count
 
