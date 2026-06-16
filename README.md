@@ -195,7 +195,6 @@ All repos are defined in [`ansible/repos.yml`](ansible/repos.yml) — single sou
 | [base-branding](https://github.com/living-atlases/base-branding) | living-atlases | LA base branding and theming |
 | [ipt](https://github.com/gbif/ipt) | gbif | GBIF Integrated Publishing Toolkit — DarwinCore data publishing |
 | [gbif-api](https://github.com/gbif/gbif-api) | gbif | GBIF public Java API model — shared types/enums |
-| [dwca-validator](https://github.com/gbif/dwca-validator) | gbif | Darwin Core Archive validator |
 | [dwca-io](https://github.com/gbif/dwca-io) | gbif | Darwin Core Archive reader/writer library |
 | [occurrence](https://github.com/gbif/occurrence) | gbif | GBIF occurrence processing and download service |
 | [registry](https://github.com/gbif/registry) | gbif | GBIF registry of datasets, organizations, nodes, installations |
@@ -203,9 +202,66 @@ All repos are defined in [`ansible/repos.yml`](ansible/repos.yml) — single sou
 
 ---
 
-## How to Add a Repository
+## Self-hosting / Deployment
 
-Open a PR editing [`ansible/repos.yml`](ansible/repos.yml):
+`https://kb.l-a.site` is the **public reference instance**. You can run your own with the
+included Ansible playbooks.
+
+### Prerequisites
+
+- A target host running **Ubuntu** with SSH access (`ansible_user` with sudo).
+- **Ansible** 2.9+ on your control machine.
+- A DNS name pointing at the host if you want public HTTPS (TLS is terminated by nginx;
+  see `ansible/files/copy-kb-cert.sh` for a Let's Encrypt deploy-hook example).
+
+### Steps
+
+1. **Configure your inventory** — copy the example and edit it:
+
+   ```bash
+   cp inventory.example.ini inventory.ini
+   # edit inventory.ini: set your host, kb_domain, kb_user, kb_home
+   ```
+
+   `inventory.ini` is gitignored, so your real host stays local. Any variable can also be
+   overridden at the command line, e.g. `-e "kb_domain=kb.myatlas.org"`.
+
+2. **Initial setup + first index** (installs deps, systemd services, nginx, then indexes):
+
+   ```bash
+   ansible-playbook -i inventory.ini ansible/setup_kb.yml
+   ```
+
+3. **Optional — RAG chat** via a local Ollama LLM:
+
+   ```bash
+   ansible-playbook -i inventory.ini ansible/install_ollama.yml
+   ```
+
+4. **Update code / restart services** without re-indexing:
+
+   ```bash
+   ansible-playbook -i inventory.ini ansible/deploy.yml
+   ```
+
+### How indexing stays fresh
+
+`kb_watcher.py` runs hourly (cron, installed by the playbook) and polls each repo with
+`git ls-remote`; it re-indexes **only** repositories whose default branch has new commits.
+To force a re-index of a single repo:
+
+```bash
+ansible-playbook -i inventory.ini ansible/setup_kb.yml \
+  --tags reindex -e "reindex_repo=Org/name"
+```
+
+---
+
+## Contributing
+
+### Add a repository to the index
+
+Open a PR editing [`ansible/repos.yml`](ansible/repos.yml) — the single source of truth:
 
 ```yaml
 tiers:
@@ -214,7 +270,7 @@ tiers:
       - name: your-repo
         org: YourOrg
         url: https://github.com/YourOrg/your-repo.git
-        branch: main
+        # branch is auto-detected from the repo's default HEAD; override only if needed.
         patterns:
           - "**/*.md"
           - "src/**/*.java"   # adjust to your stack
@@ -222,12 +278,9 @@ tiers:
 ```
 
 **Criteria:** actively maintained public LA/GBIF ecosystem service with meaningful docs or config.
+After merge, the maintainer re-runs `ansible/setup_kb.yml` (or the watcher picks it up) to index it.
 
-After merge, re-run `ansible/setup_kb.yml` on the server to index the new repo.
-
----
-
-## Development
+### Local development
 
 ```bash
 cd server
@@ -235,8 +288,19 @@ pip install -r requirements.txt
 uvicorn api:app --reload
 ```
 
-Tests:
+### Tests & conventions
 
 ```bash
-pytest tests/
+pytest tests/ -v
 ```
+
+- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
+- CI (`.github/workflows/ci.yml`) runs the pytest suite on every push/PR.
+
+---
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
+
+Copyright © Living Atlases / GBIF community.

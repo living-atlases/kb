@@ -1,16 +1,20 @@
 #!/bin/bash
-# Deploy hook: copy kb.l-a.site cert to VM nginx after renewal
+# Deploy hook: copy the KB cert to the VM's nginx after renewal.
 # Install at: /etc/letsencrypt/renewal-hooks/deploy/copy-kb-cert.sh
 # chmod 700 /etc/letsencrypt/renewal-hooks/deploy/copy-kb-cert.sh
+#
+# Configure for your deployment via environment variables (defaults shown):
+#   KB_DOMAIN  - the certificate domain        (default: kb.l-a.site)
+#   KB_VM_SSH  - ssh host/alias of the target  (default: la-toolkit-kb)
 
 set -euo pipefail
 
-DOMAIN="kb.l-a.site"
-VM_SSH="la-toolkit-kb-dev-2026"
+DOMAIN="${KB_DOMAIN:-kb.l-a.site}"
+VM_SSH="${KB_VM_SSH:-la-toolkit-kb}"
 VM_CERT_DIR="/etc/letsencrypt/live/${DOMAIN}"
 CERT_DIR="/etc/letsencrypt/live/${DOMAIN}"
 
-# Only run for kb.l-a.site renewal
+# Only run for the configured domain's renewal
 if [[ ! " ${RENEWED_DOMAINS} " =~ " ${DOMAIN} " ]]; then
     exit 0
 fi

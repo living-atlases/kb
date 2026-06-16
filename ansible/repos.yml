@@ -76,7 +76,9 @@ orgs:
       - name: ipt
         wiki: true
       - gbif-api
+      - dwc-api               # Darwin Core term enumeration (org.gbif.dwc.terms) — heavily used by pipelines
       - dwca-io
+      - vocabulary            # controlled vocabularies used in pipelines interpretation
       - occurrence
       - name: registry
         wiki: true
