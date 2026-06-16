@@ -1,18 +1,20 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_gen_ai_chat_ui/flutter_gen_ai_chat_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'kb_client.dart';
 import 'kb_config.dart';
 
 /// Starter questions shown in the empty chat state.
 const _kStarterQuestions = [
-  'How do I install collectory?',
-  'How do I configure biocache-service?',
-  'What does ala-install configure for spatial-hub?',
-  'How do I set up the image service?',
-  'What Ansible roles are needed for a basic LA deployment?',
+  'How do I deploy a Living Atlas with la-toolkit?',
+  'How does ala-install configure the collectory MySQL database and user?',
+  'How do I set up SSL/TLS in my portal?',
+  'How do I add a new species list to species-lists?',
+  'What pipelines steps run during occurrence indexing?',
 ];
 
 /// Maximum number of prior messages (user+assistant) sent as history.
@@ -48,6 +50,7 @@ class _KbChatWidgetState extends State<KbChatWidget> {
   late final ChatMessagesController _controller;
   late final ChatUser _userMe;
   late final ChatUser _userBot;
+  late final TextEditingController _inputController;
   bool _isLoading = false;
   StreamSubscription<String>? _streamSub;
 
@@ -58,6 +61,7 @@ class _KbChatWidgetState extends State<KbChatWidget> {
     _userMe = const ChatUser(id: 'user', name: 'You');
     _userBot = const ChatUser(id: 'bot', name: 'LA Knowledge Base');
     _controller = ChatMessagesController();
+    _inputController = TextEditingController();
   }
 
   @override
@@ -65,6 +69,7 @@ class _KbChatWidgetState extends State<KbChatWidget> {
     _streamSub?.cancel();
     _client.dispose();
     _controller.dispose();
+    _inputController.dispose();
     super.dispose();
   }
 
@@ -89,6 +94,19 @@ class _KbChatWidgetState extends State<KbChatWidget> {
     return history;
   }
 
+  /// Send the current text in [_inputController] as a chat message.
+  void _sendFromInput() {
+    final text = _inputController.text.trim();
+    if (text.isEmpty) return;
+    final msg = ChatMessage(
+      text: text,
+      user: _userMe,
+      createdAt: DateTime.now(),
+    );
+    _inputController.clear();
+    _handleSend(msg);
+  }
+
   Future<void> _handleSend(ChatMessage userMessage) async {
     _controller.addMessage(userMessage);
 
@@ -105,12 +123,20 @@ class _KbChatWidgetState extends State<KbChatWidget> {
       isMarkdown: true,
       customProperties: {'id': botMsgId},
     );
-    _controller.addStreamingMessage(botMsg);
+
+    // Defer adding the bot bubble until the first token arrives so the user
+    // never sees an empty assistant message. The loading spinner (isLoading)
+    // provides feedback in the meantime.
+    bool botAdded = false;
 
     final buffer = StringBuffer();
     final completer = Completer<void>();
 
     void updateBot(String text) {
+      if (!botAdded) {
+        _controller.addStreamingMessage(botMsg);
+        botAdded = true;
+      }
       _controller.updateMessage(botMsg.copyWith(text: text));
     }
 
@@ -137,7 +163,7 @@ class _KbChatWidgetState extends State<KbChatWidget> {
       await completer.future;
     } finally {
       _streamSub = null;
-      _controller.stopStreamingMessage(botMsgId);
+      if (botAdded) _controller.stopStreamingMessage(botMsgId);
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -165,48 +191,69 @@ class _KbChatWidgetState extends State<KbChatWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        AiChatWidget(
-          currentUser: _userMe,
-          aiUser: _userBot,
-          controller: _controller,
-          onSendMessage: _handleSend,
-          loadingConfig: LoadingConfig(isLoading: _isLoading),
-          aiName: widget.title,
-          enableAnimation: true,
-          exampleQuestions: _kStarterQuestions
-              .map((q) => ExampleQuestion(question: q))
-              .toList(),
-          inputOptions: const InputOptions(
-            decoration: InputDecoration(
-              hintText: 'Ask about LA services, ala-install, biocache…',
+    return CallbackShortcuts(
+      bindings: {
+        // Ctrl+Enter (Linux/Windows) and Cmd+Enter (macOS/web) → send.
+        LogicalKeySet(
+          LogicalKeyboardKey.control,
+          LogicalKeyboardKey.enter,
+        ): _sendFromInput,
+        LogicalKeySet(
+          LogicalKeyboardKey.meta,
+          LogicalKeyboardKey.enter,
+        ): _sendFromInput,
+      },
+      child: Stack(
+        children: [
+          AiChatWidget(
+            currentUser: _userMe,
+            aiUser: _userBot,
+            controller: _controller,
+            onSendMessage: _handleSend,
+            loadingConfig: LoadingConfig(isLoading: _isLoading),
+            aiName: widget.title,
+            enableAnimation: true,
+            exampleQuestions: _kStarterQuestions
+                .map((q) => ExampleQuestion(question: q))
+                .toList(),
+            inputOptions: InputOptions(
+              textController: _inputController,
+              decoration: const InputDecoration(
+                hintText: 'Ask about LA services, ala-install, biocache…',
+              ),
+            ),
+            messageOptions: MessageOptions(
+              showCopyButton: true,
+              onCopy: (text) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Copied'),
+                    duration: Duration(seconds: 1),
+                  ),
+                );
+              },
+              onTapLink: (text, href, title) async {
+                if (href == null) return;
+                final uri = Uri.tryParse(href);
+                if (uri != null && await canLaunchUrl(uri)) {
+                  await launchUrl(uri, mode: LaunchMode.externalApplication);
+                }
+              },
             ),
           ),
-          messageOptions: MessageOptions(
-            showCopyButton: true,
-            onCopy: (text) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Copied'),
-                  duration: Duration(seconds: 1),
-                ),
-              );
-            },
-          ),
-        ),
-        if (_isLoading)
-          Positioned(
-            right: 16,
-            bottom: 80,
-            child: FloatingActionButton.small(
-              heroTag: 'kb_stop_btn',
-              tooltip: 'Stop',
-              onPressed: _handleStop,
-              child: const Icon(Icons.stop),
+          if (_isLoading)
+            Positioned(
+              right: 16,
+              bottom: 80,
+              child: FloatingActionButton.small(
+                heroTag: 'kb_stop_btn',
+                tooltip: 'Stop',
+                onPressed: _handleStop,
+                child: const Icon(Icons.stop),
+              ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }

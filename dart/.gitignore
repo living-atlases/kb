@@ -1,0 +1,8 @@
+# Dart/Flutter build artifacts & generated files
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+# Library package: lockfile is not committed
+pubspec.lock
