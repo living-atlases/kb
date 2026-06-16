@@ -2,6 +2,11 @@
 
 Knowledge base service for Living Atlas / ALA repositories — semantic search over documentation, configuration, and source code, exposed as an **MCP tool** for AI assistants and as a REST API.
 
+> ⚠️ **Early-stage / work in progress.** This is an experimental project under
+> development. APIs, MCP endpoints, the indexed repository set, and the deployment
+> process may still evolve, so expect occasional breaking changes. Feedback and
+> contributions are very welcome!
+
 - **MCP endpoint:** `https://kb.l-a.site/mcp`
 - **REST API:** `https://kb.l-a.site/api/`
 - **API docs:** `https://kb.l-a.site/api/docs`
