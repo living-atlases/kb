@@ -4,6 +4,8 @@
 # URL construction: {base_url}/{name}.git
 # Branch: the repo's default branch (HEAD) is auto-detected — no need to set it.
 #         Override per-repo with `branch:` only to index a NON-default branch.
+# Releases: GitHub Releases are indexed by kb_releases.py (content_type=release)
+#           and aggregated into data/versions.json. Opt out with `releases: false`.
 # To add a repo: add the name under its org. Open a PR.
 #
 # Tier1: repos indexed first during initial setup (not a scheduling distinction).
@@ -65,6 +67,8 @@ orgs:
     base_url: https://github.com/living-atlases
     repos:
       - la-toolkit
+      - name: la-toolkit-backend
+        description: "la-toolkit backend; assets/dependencies.yaml tracks ALA component versions + deps"
       - base-branding
 
   gbif:
@@ -90,6 +94,17 @@ tier1:
   - AtlasOfLivingAustralia/ala-install
   - living-atlases/la-toolkit
   - gbif/pipelines
+
+# Local (non-git) sources, indexed by walking a directory shipped with the KB
+# (no clone/pull). `path` is relative to KB_HOME. `source_type` lands in each
+# chunk's content_type metadata so retrieval can boost curated answers.
+# The FAQ distils answers to recurring community questions; entries are written
+# to be portable to the AtlasOfLivingAustralia/documentation wiki too.
+local_sources:
+  - name: la-kb-faq
+    path: faq
+    source_type: faq
+    description: Curated FAQ for recurring Living Atlas community questions
 
 # Global index blocklist — never indexed regardless of repo.
 # Matching (see is_blocked in kb_indexer.py): a pattern ending in "/" matches any

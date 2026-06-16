@@ -104,6 +104,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                     "description": description,
                     "is_wiki": False,
                     "index_releases": index_releases,
+                    "content_type": "source",
                 }
             )
             if has_wiki:
@@ -116,8 +117,27 @@ def expand_repos(manifest: dict) -> list[dict]:
                         "description": f"GitHub wiki for {org}/{name}",
                         "is_wiki": True,
                         "index_releases": False,
+                        "content_type": "wiki",
                     }
                 )
+
+    # Local (non-git) sources, e.g. a curated FAQ folder shipped with the KB.
+    # Indexed by walking `local_path` directly — no clone/pull.
+    for src in manifest.get("local_sources", []):
+        repos.append(
+            {
+                "org": src.get("org", "local"),
+                "name": src["name"],
+                "url": None,
+                "branch": None,
+                "description": src.get("description", ""),
+                "is_wiki": False,
+                "index_releases": False,
+                "is_local": True,
+                "local_path": src["path"],
+                "content_type": src.get("source_type", "faq"),
+            }
+        )
     return repos
 
 
@@ -202,8 +222,12 @@ def index_repo(
     collection: chromadb.Collection,
     blocklist: list[str],
 ) -> int:
-    repo_dir = REPOS_DIR / repo_meta["org"] / repo_meta["name"]
+    if repo_meta.get("is_local"):
+        repo_dir = (KB_HOME / repo_meta["local_path"]).resolve()
+    else:
+        repo_dir = REPOS_DIR / repo_meta["org"] / repo_meta["name"]
     org_name = f"{repo_meta['org']}/{repo_meta['name']}"
+    content_type = repo_meta.get("content_type", "source")
     count = 0
 
     ids: list[str] = []
@@ -243,7 +267,7 @@ def index_repo(
                     "org": repo_meta["org"],
                     "file": str(rel),
                     "chunk": i,
-                    "content_type": "source",
+                    "content_type": content_type,
                 }
             )
             count += 1
@@ -274,7 +298,8 @@ def run(repos: list[dict], blocklist: list[str]) -> None:
     total = 0
     for repo_meta in repos:
         try:
-            _, _ = clone_or_pull(repo_meta)
+            if not repo_meta.get("is_local"):
+                clone_or_pull(repo_meta)
             total += index_repo(repo_meta, collection, blocklist)
         except Exception as exc:
             if repo_meta.get("is_wiki"):

@@ -15,10 +15,10 @@ from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 
 try:
-    from chat import build_messages, stream_ollama
+    from chat import build_messages, generate_ollama, stream_ollama
     from repos import load_manifest
 except ImportError:
-    from server.chat import build_messages, stream_ollama
+    from server.chat import build_messages, generate_ollama, stream_ollama
     from server.repos import load_manifest
 
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "/opt/la-toolkit-kb/data/chromadb/")
@@ -82,6 +82,39 @@ class ChatRequest(BaseModel):
     history: list[ChatMessage] = Field(default_factory=list)
 
 
+class AnswerRequest(BaseModel):
+    question: str
+    collection: str = "la_toolkit_kb"
+    n_results: int = Field(default=8, ge=1, le=10)
+    content_type: Optional[str] = Field(
+        default=None,
+        description="Optionally restrict retrieval to a content_type "
+        "('faq', 'wiki', 'source', 'release').",
+    )
+
+
+class AnswerSource(BaseModel):
+    n: int
+    repo: str
+    file: str = ""
+    content_type: Optional[str] = None
+    relevance: float
+
+
+class AnswerResponse(BaseModel):
+    answer: str
+    sources: list[AnswerSource]
+
+
+# Curated / documentation content answers questions better than raw code, so it
+# gets a small relevance boost before being handed to the LLM for synthesis.
+CONTENT_TYPE_BOOST = {
+    "faq": 0.08,
+    "slack_thread": 0.06,
+    "wiki": 0.04,
+}
+
+
 @app.get("/", response_class=HTMLResponse)
 def home():
     return """<!DOCTYPE html>
@@ -127,7 +160,8 @@ def home():
   <p>Query the knowledge base programmatically from any HTTP client.</p>
   <div class="endpoint"><span class="badge get">GET</span> <code>/health</code> — Health check</div>
   <div class="endpoint"><span class="badge get">GET</span> <code>/api/collections</code> — List available collections and document counts</div>
-  <div class="endpoint"><span class="badge post">POST</span> <code>/api/query</code> — Semantic search query</div>
+  <div class="endpoint"><span class="badge post">POST</span> <code>/api/query</code> — Semantic search query (raw chunks)</div>
+  <div class="endpoint"><span class="badge post">POST</span> <code>/api/answer</code> — RAG synthesis: a cited answer with a structured source list</div>
 
   <h3>Example query</h3>
   <pre>curl -X POST https://kb.l-a.site/api/query \\
@@ -160,7 +194,8 @@ def home():
 }</pre>
   <h3>Available MCP tools</h3>
   <ul>
-    <li><code>query_ala_kb</code> — Semantic search over the Living Atlas knowledge base</li>
+    <li><code>query_ala_kb</code> — Semantic search over the Living Atlas knowledge base (raw chunks)</li>
+    <li><code>answer_ala_kb</code> — RAG synthesis: a cited answer composed from the knowledge base</li>
     <li><code>list_ala_kb_collections</code> — List available document collections</li>
   </ul>
 
@@ -290,6 +325,76 @@ async def _chat_sse_generator(req: ChatRequest):
         yield f'data: {{"error": "Ollama error: {exc.response.status_code}"}}\n\n'
 
     yield "data: [DONE]\n\n"
+
+
+def _source_label(meta: dict) -> str:
+    """Human-readable citation label for a chunk, e.g. 'org/repo/path' or a release."""
+    repo = meta.get("repo", "unknown")
+    if meta.get("content_type") == "release":
+        tag = meta.get("tag", "")
+        return f"{repo} release {tag}".strip()
+    file = meta.get("file", "")
+    return f"{repo}/{file}" if file else repo
+
+
+@app.post("/api/answer", response_model=AnswerResponse)
+async def answer(req: AnswerRequest):
+    """RAG synthesis: retrieve context, ask the LLM, return a cited answer.
+
+    Unlike /api/chat (SSE token stream), this returns the complete answer plus a
+    structured `sources` list so non-Claude clients (e.g. a Slack bot) get a
+    ready-to-post, attributable response.
+    """
+    try:
+        col = chroma_client.get_collection(req.collection)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Collection '{req.collection}' not found")
+
+    query_kwargs = dict(
+        query_embeddings=embed_model.encode([req.question]).tolist(),
+        n_results=req.n_results,
+        include=["documents", "metadatas", "distances"],
+    )
+    if req.content_type:
+        query_kwargs["where"] = {"content_type": req.content_type}
+
+    results = col.query(**query_kwargs)
+
+    hits = []
+    for doc, meta, dist in zip(
+        results["documents"][0],
+        results["metadatas"][0],
+        results["distances"][0],
+    ):
+        relevance = round(1 - dist, 3)
+        boost = CONTENT_TYPE_BOOST.get(meta.get("content_type"), 0.0)
+        hits.append({"doc": doc, "meta": meta, "relevance": relevance, "score": relevance + boost})
+
+    # Re-rank so curated answers (faq/wiki) surface above raw code on ties.
+    hits.sort(key=lambda h: h["score"], reverse=True)
+
+    context_chunks = [h["doc"] for h in hits]
+    source_labels = [{"label": _source_label(h["meta"]), "repo": h["meta"].get("repo", "unknown")} for h in hits]
+    messages = build_messages(context_chunks, req.question, sources=source_labels)
+
+    try:
+        answer_text = await generate_ollama(messages)
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Ollama not available. Is it running on localhost:11434?")
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama error: {exc.response.status_code}")
+
+    sources = [
+        AnswerSource(
+            n=i,
+            repo=h["meta"].get("repo", "unknown"),
+            file=h["meta"].get("file", ""),
+            content_type=h["meta"].get("content_type"),
+            relevance=h["relevance"],
+        )
+        for i, h in enumerate(hits, 1)
+    ]
+    return AnswerResponse(answer=answer_text, sources=sources)
 
 
 @app.post("/api/chat")

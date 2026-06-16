@@ -120,6 +120,22 @@ def expand_repos(manifest: dict) -> list[dict]:
                         "url": f"{base_url}/{name}.wiki.git",
                     }
                 )
+
+    # Local (non-git) sources, e.g. the curated FAQ folder. Polled by content
+    # fingerprint (file mtime/size) instead of git SHA.
+    for src in manifest.get("local_sources", []):
+        repos.append(
+            {
+                "org": src.get("org", "local"),
+                "name": src["name"],
+                "branch": None,
+                "is_wiki": False,
+                "index_releases": False,
+                "url": None,
+                "is_local": True,
+                "local_path": src["path"],
+            }
+        )
     return repos
 
 
@@ -152,6 +168,27 @@ def fetch_latest_sha(org: str, name: str, url: str, branch: str | None) -> str |
         return None
 
     return result.stdout.split()[0].strip()
+
+
+def fetch_local_fingerprint(local_path: str) -> str | None:
+    """Return a fingerprint of a local source dir (file path/mtime/size), or None.
+
+    Changes to any indexed file flip the fingerprint, triggering a re-index —
+    the local-source equivalent of a new commit SHA.
+    """
+    import hashlib
+
+    base = (KB_HOME / local_path).resolve()
+    if not base.exists():
+        log.warning("local source path missing: %s", base)
+        return None
+    h = hashlib.sha256()
+    for path in sorted(base.rglob("*")):
+        if not path.is_file():
+            continue
+        st = path.stat()
+        h.update(f"{path.relative_to(base)}:{int(st.st_mtime)}:{st.st_size}\n".encode())
+    return h.hexdigest()
 
 
 # ── Release polling ───────────────────────────────────────────────────────────
@@ -246,6 +283,25 @@ def main() -> None:
         key = f"{org}/{name}"
         entry = entry_for(state, key)
         changed = False
+
+        # ── Local (non-git) source → fingerprint poll ──
+        if repo.get("is_local"):
+            fp = fetch_local_fingerprint(repo["local_path"])
+            if fp is None:
+                errors += 1
+            elif entry.get("fingerprint") == fp:
+                log.debug("%s: local source unchanged", key)
+                unchanged += 1
+            else:
+                log.info("%s: local source changed — re-indexing", key)
+                if reindex_repo(org, name):
+                    entry["fingerprint"] = fp
+                    state[key] = entry
+                    save_state(state)
+                    updated += 1
+                else:
+                    errors += 1
+            continue
 
         # ── Commit poll → re-index file content ──
         sha = fetch_latest_sha(org, name, repo["url"], branch)

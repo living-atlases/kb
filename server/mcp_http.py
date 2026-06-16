@@ -53,6 +53,42 @@ async def handle_query(arguments: dict, http_client=None) -> str:
     return "\n".join(lines)
 
 
+async def handle_answer(arguments: dict, http_client=None) -> str:
+    """Get a RAG-synthesised, cited answer via REST API; format as markdown."""
+    if http_client is None:
+        http_client = httpx.AsyncClient()
+
+    question = arguments["question"]
+    collection = arguments.get("collection", "la_toolkit_kb")
+    n_results = min(arguments.get("n_results", 8), 10)
+    content_type = arguments.get("content_type")
+
+    payload = {"question": question, "collection": collection, "n_results": n_results}
+    if content_type:
+        payload["content_type"] = content_type
+
+    response = await http_client.post(
+        f"{REST_API_URL}/api/answer",
+        json=payload,
+        timeout=180,
+    )
+
+    if response.status_code != 200:
+        detail = "unknown error"
+        try:
+            detail = response.json().get("detail", detail)
+        except Exception:
+            pass
+        return f"Error answering from KB: {response.status_code} — {detail}"
+
+    data = response.json()
+    lines = [data.get("answer", "").strip(), "", "## Sources"]
+    for s in data.get("sources", []):
+        loc = f"{s['repo']}/{s['file']}" if s.get("file") else s["repo"]
+        lines.append(f"- [{s['n']}] `{loc}` (relevance: {s['relevance']})")
+    return "\n".join(lines)
+
+
 async def handle_versions(arguments: dict, http_client=None) -> str:
     """Fetch component version metadata via REST API and format as markdown."""
     if http_client is None:
@@ -113,6 +149,33 @@ async def query_ala_kb(
     changelogs) or 'source' (repo files). Omit for both.
     """
     return await handle_query(
+        {
+            "question": question,
+            "collection": collection,
+            "n_results": n_results,
+            "content_type": content_type,
+        }
+    )
+
+
+@mcp.tool()
+async def answer_ala_kb(
+    question: str,
+    collection: str = "la_toolkit_kb",
+    n_results: int = 8,
+    content_type: str | None = None,
+) -> str:
+    """Answer a question about the ALA / Living Atlas ecosystem.
+
+    Unlike query_ala_kb (which returns raw chunks), this returns a synthesised
+    answer composed by an LLM from the knowledge base, followed by a numbered
+    list of the sources it cited. Best for non-Claude clients or when you want a
+    ready-to-use answer; for your own synthesis, use query_ala_kb.
+
+    content_type: optionally restrict retrieval to 'faq', 'wiki', 'source' or
+    'release'. Omit for all.
+    """
+    return await handle_answer(
         {
             "question": question,
             "collection": collection,

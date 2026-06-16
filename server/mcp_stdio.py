@@ -12,6 +12,7 @@ REST_API_URL = os.environ.get("KB_API_URL", "http://localhost:8080")
 
 # Re-use handler functions from mcp_http
 from server.mcp_http import (  # noqa: E402
+    handle_answer,
     handle_list_collections,
     handle_query,
     handle_versions,
@@ -30,6 +31,20 @@ async def list_tools() -> list[Tool]:
                     "collection": {"type": "string", "default": "la_toolkit_kb", "description": "Which KB collection to query"},
                     "n_results": {"type": "integer", "default": 5, "minimum": 1, "maximum": 10, "description": "Number of results to return"},
                     "content_type": {"type": "string", "enum": ["release", "source"], "description": "Optionally restrict to 'release' (release notes/changelogs) or 'source' (repo files)"},
+                },
+                "required": ["question"],
+            },
+        ),
+        Tool(
+            name="answer_ala_kb",
+            description="Answer a question about ALA/Living Atlas: returns an LLM-synthesised, cited answer (not raw chunks), followed by a numbered source list. Use for ready-to-post answers; use query_ala_kb if you want to synthesise yourself.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "The question about ALA/Living Atlas"},
+                    "collection": {"type": "string", "default": "la_toolkit_kb", "description": "Which KB collection to query"},
+                    "n_results": {"type": "integer", "default": 8, "minimum": 1, "maximum": 10, "description": "How many chunks to retrieve as context"},
+                    "content_type": {"type": "string", "enum": ["faq", "wiki", "source", "release"], "description": "Optionally restrict retrieval to a content type"},
                 },
                 "required": ["question"],
             },
@@ -61,6 +76,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     async with httpx.AsyncClient() as client:
         if name == "query_ala_kb":
             text = await handle_query(arguments, http_client=client)
+        elif name == "answer_ala_kb":
+            text = await handle_answer(arguments, http_client=client)
         elif name == "list_ala_kb_collections":
             text = await handle_list_collections(arguments, http_client=client)
         elif name == "get_ala_component_versions":

@@ -83,6 +83,53 @@ class TestBuildMessages:
         full = json.dumps(messages)
         assert "[INST]" not in full
 
+    def test_sources_number_blocks_and_request_citations(self):
+        from server.chat import build_messages, SYSTEM_PROMPT_CITED
+        messages = build_messages(
+            ["chunk A", "chunk B"],
+            "q",
+            sources=[{"label": "repo/a.java"}, {"label": "repo/b.md"}],
+        )
+        assert messages[0]["content"] == SYSTEM_PROMPT_CITED
+        user = next(m for m in messages if m["role"] == "user")
+        assert "[1] repo/a.java" in user["content"]
+        assert "[2] repo/b.md" in user["content"]
+
+    def test_without_sources_uses_plain_prompt(self):
+        from server.chat import build_messages, SYSTEM_PROMPT
+        messages = build_messages(["chunk A"], "q")
+        assert messages[0]["content"] == SYSTEM_PROMPT
+        user = next(m for m in messages if m["role"] == "user")
+        assert "[1]" not in user["content"]
+
+
+class TestGenerateOllama:
+    @pytest.mark.asyncio
+    async def test_returns_full_answer(self):
+        from server.chat import generate_ollama
+
+        class FakeResp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"message": {"role": "assistant", "content": "Full answer [1]."}}
+
+        class FakeClient:
+            async def post(self, *args, **kwargs):
+                return FakeResp()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_):
+                pass
+
+        with patch("server.chat.httpx.AsyncClient", return_value=FakeClient()):
+            text = await generate_ollama([{"role": "user", "content": "q"}])
+
+        assert text == "Full answer [1]."
+
 
 class TestStreamOllama:
     @pytest.mark.asyncio

@@ -56,6 +56,44 @@ async def test_query_tool_handles_api_error(mock_httpx_client):
 
 
 @pytest.mark.asyncio
+async def test_answer_tool_formats_answer_and_sources(mock_httpx_client):
+    mock_httpx_client.post.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {
+            "answer": "Set the filter pattern [1].",
+            "sources": [
+                {"n": 1, "repo": "AtlasOfLivingAustralia/ala-install", "file": "config.properties",
+                 "content_type": "source", "relevance": 0.62},
+            ],
+        },
+    )
+
+    from server.mcp_http import handle_answer
+    result = await handle_answer(
+        {"question": "require login on downloads", "n_results": 8},
+        http_client=mock_httpx_client,
+    )
+
+    assert "Set the filter pattern [1]." in result
+    assert "## Sources" in result
+    assert "[1] `AtlasOfLivingAustralia/ala-install/config.properties`" in result
+
+
+@pytest.mark.asyncio
+async def test_answer_tool_handles_api_error(mock_httpx_client):
+    mock_httpx_client.post.return_value = MagicMock(
+        status_code=503,
+        json=lambda: {"detail": "Ollama not available"},
+    )
+
+    from server.mcp_http import handle_answer
+    result = await handle_answer({"question": "test"}, http_client=mock_httpx_client)
+
+    assert "Error" in result
+    assert "Ollama not available" in result
+
+
+@pytest.mark.asyncio
 async def test_list_collections_tool(mock_httpx_client):
     mock_httpx_client.get.return_value = MagicMock(
         status_code=200,

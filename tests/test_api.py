@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 
@@ -96,6 +96,60 @@ def test_query_n_results_capped_at_10(test_client, mock_chroma):
 def test_query_missing_question_returns_422(test_client):
     response = test_client.post("/api/query", json={})
     assert response.status_code == 422
+
+
+def test_answer_returns_answer_and_sources(test_client):
+    with patch("server.api.generate_ollama", new=AsyncMock(return_value="Use the flag [1].")):
+        response = test_client.post("/api/answer", json={"question": "how to require login"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["answer"] == "Use the flag [1]."
+    assert len(data["sources"]) == 2
+    assert data["sources"][0]["n"] == 1
+    assert data["sources"][0]["repo"] == "collectory"
+
+
+def test_answer_builds_cited_context(test_client):
+    """The LLM must receive numbered, source-labelled context blocks."""
+    captured = {}
+
+    async def _fake_generate(messages):
+        captured["messages"] = messages
+        return "ok"
+
+    with patch("server.api.generate_ollama", new=_fake_generate):
+        test_client.post("/api/answer", json={"question": "q"})
+
+    user = next(m for m in captured["messages"] if m["role"] == "user")
+    assert "[1] collectory/" in user["content"]
+
+
+def test_answer_reranks_faq_above_source(test_client, mock_chroma):
+    """A faq chunk with slightly lower raw relevance should outrank source after boost."""
+    mock_chroma.query.return_value = {
+        "documents": [["raw code chunk", "curated faq chunk"]],
+        "metadatas": [[
+            {"repo": "biocache-service", "file": "Foo.java", "chunk": 0, "content_type": "source"},
+            {"repo": "local/la-kb-faq", "file": "auth.md", "chunk": 0, "content_type": "faq"},
+        ]],
+        "distances": [[0.50, 0.56]],  # source rel 0.50 > faq rel 0.44, faq +0.08 boost -> 0.52
+    }
+    with patch("server.api.generate_ollama", new=AsyncMock(return_value="ok")):
+        response = test_client.post("/api/answer", json={"question": "q"})
+    sources = response.json()["sources"]
+    assert sources[0]["content_type"] == "faq"
+    assert sources[1]["content_type"] == "source"
+
+
+def test_answer_ollama_unavailable_returns_503(test_client):
+    import httpx
+
+    async def _refuse(messages):
+        raise httpx.ConnectError("refused")
+
+    with patch("server.api.generate_ollama", new=_refuse):
+        response = test_client.post("/api/answer", json={"question": "q"})
+    assert response.status_code == 503
 
 
 def test_collections_returns_list(test_client):
