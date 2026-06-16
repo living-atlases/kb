@@ -2,12 +2,19 @@
 """
 kb_watcher.py — Living Atlas KB commit watcher
 
-Polls the latest commit SHA of every repo in config/repos.yml via
-`git ls-remote` (default branch / HEAD unless a branch override is set).
-Re-indexes a repo only when new commits are detected since the last run.
+Polls each repo in config/repos.yml for two kinds of change and re-indexes only
+what changed:
+  - new commits → latest SHA via `git ls-remote` (default branch / HEAD) →
+    kb_indexer.py --repo
+  - new GitHub release → latest release date via the GitHub API →
+    kb_releases.py --repo
+
+Releases can be published without moving the default-branch HEAD (a tag on an
+older commit), so the SHA poll alone would miss them — hence the separate poll.
 
 State stored in: {KB_HOME}/data/watcher_state.json
-  { "ORG/NAME": "<last_commit_sha>", ... }
+  { "ORG/NAME": {"head_sha": "<sha>", "release_date": "<iso8601>"}, ... }
+Legacy plain-string SHA values are migrated transparently.
 
 Cron: 0 * * * * (every hour)
 """
@@ -19,6 +26,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import httpx
 import yaml
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -27,9 +35,11 @@ KB_HOME = Path(os.environ.get("KB_HOME", Path(__file__).parent.parent))
 CONFIG_FILE = KB_HOME / "config" / "repos.yml"
 STATE_FILE = KB_HOME / "data" / "watcher_state.json"
 INDEXER = KB_HOME / "scripts" / "kb_indexer.py"
+RELEASER = KB_HOME / "scripts" / "kb_releases.py"
 VENV_PYTHON = KB_HOME / "venv" / "bin" / "python3"
 
 REQUEST_TIMEOUT = 20  # seconds
+GITHUB_API = "https://api.github.com"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +65,16 @@ def save_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
+def entry_for(state: dict, key: str) -> dict:
+    """Return the per-repo state dict, migrating legacy plain-SHA strings."""
+    val = state.get(key)
+    if isinstance(val, str):  # legacy format: bare head SHA
+        return {"head_sha": val}
+    if isinstance(val, dict):
+        return val
+    return {}
+
+
 # ── Manifest helpers ──────────────────────────────────────────────────────────
 
 def expand_repos(manifest: dict) -> list[dict]:
@@ -73,16 +93,19 @@ def expand_repos(manifest: dict) -> list[dict]:
                 name = entry
                 branch = default_branch
                 has_wiki = False
+                index_releases = True
             else:
                 name = entry["name"]
                 branch = entry.get("branch", default_branch)
                 has_wiki = bool(entry.get("wiki", False))
+                index_releases = bool(entry.get("releases", True))
             repos.append(
                 {
                     "org": org,
                     "name": name,
                     "branch": branch,
                     "is_wiki": False,
+                    "index_releases": index_releases,
                     "url": f"{base_url}/{name}.git",
                 }
             )
@@ -93,6 +116,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                         "name": f"{name}.wiki",
                         "branch": None,
                         "is_wiki": True,
+                        "index_releases": False,
                         "url": f"{base_url}/{name}.wiki.git",
                     }
                 )
@@ -130,13 +154,45 @@ def fetch_latest_sha(org: str, name: str, url: str, branch: str | None) -> str |
     return result.stdout.split()[0].strip()
 
 
+# ── Release polling ───────────────────────────────────────────────────────────
+
+def github_headers() -> dict:
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "living-atlas-kb-watcher",
+    }
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def fetch_latest_release_date(org: str, name: str, headers: dict) -> str | None:
+    """Return the latest published release's `published_at`, or None.
+
+    Uses /releases/latest (newest non-draft, non-prerelease). 404 = no full
+    release. Any error → None (treated as "no change" this cycle).
+    """
+    url = f"{GITHUB_API}/repos/{org}/{name}/releases/latest"
+    try:
+        resp = httpx.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    except httpx.RequestError as e:
+        log.warning("%s/%s: releases/latest error — %s", org, name, e)
+        return None
+    if resp.status_code != 200:
+        log.debug("%s/%s: releases/latest HTTP %s", org, name, resp.status_code)
+        return None
+    return resp.json().get("published_at")
+
+
 # ── Indexer invocation ────────────────────────────────────────────────────────
 
-def reindex_repo(org: str, name: str) -> bool:
-    """Call kb_indexer.py --repo ORG/NAME. Returns True on success."""
+def _run_indexer(script: Path, org: str, name: str, label: str) -> bool:
+    """Call a KB indexer script with --repo ORG/NAME. Returns True on success."""
     python = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
-    cmd = [python, str(INDEXER), "--repo", f"{org}/{name}"]
-    log.info("Re-indexing %s/%s ...", org, name)
+    cmd = [python, str(script), "--repo", f"{org}/{name}"]
+    log.info("%s %s/%s ...", label, org, name)
     try:
         result = subprocess.run(
             cmd,
@@ -146,16 +202,26 @@ def reindex_repo(org: str, name: str) -> bool:
             timeout=1800,
         )
         if result.returncode != 0:
-            log.error("%s/%s: indexer failed:\n%s", org, name, result.stderr[-2000:])
+            log.error("%s/%s: %s failed:\n%s", org, name, label, result.stderr[-2000:])
             return False
-        log.info("%s/%s: re-indexed successfully", org, name)
+        log.info("%s/%s: %s ok", org, name, label)
         return True
     except subprocess.TimeoutExpired:
-        log.error("%s/%s: indexer timed out", org, name)
+        log.error("%s/%s: %s timed out", org, name, label)
         return False
     except Exception as e:
-        log.error("%s/%s: indexer error — %s", org, name, e)
+        log.error("%s/%s: %s error — %s", org, name, label, e)
         return False
+
+
+def reindex_repo(org: str, name: str) -> bool:
+    """Re-index repo file content (new commits)."""
+    return _run_indexer(INDEXER, org, name, "Re-indexing")
+
+
+def reindex_releases(org: str, name: str) -> bool:
+    """Re-index repo GitHub releases (new release)."""
+    return _run_indexer(RELEASER, org, name, "Re-indexing releases")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -170,35 +236,54 @@ def main() -> None:
 
     repos = expand_repos(manifest)
     state = load_state()
+    headers = github_headers()
     updated = 0
     errors = 0
+    unchanged = 0
 
     for repo in repos:
         org, name, branch = repo["org"], repo["name"], repo["branch"]
         key = f"{org}/{name}"
+        entry = entry_for(state, key)
+        changed = False
 
+        # ── Commit poll → re-index file content ──
         sha = fetch_latest_sha(org, name, repo["url"], branch)
         if sha is None:
             errors += 1
-            continue
-
-        if state.get(key) == sha:
+        elif entry.get("head_sha") == sha:
             log.debug("%s: no new commits (sha=%s)", key, sha[:12])
-            continue
+        else:
+            log.info("%s: new commits (old=%s new=%s)", key, (entry.get("head_sha") or "none")[:12], sha[:12])
+            if reindex_repo(org, name):
+                entry["head_sha"] = sha
+                changed = True
+            else:
+                errors += 1
 
-        log.info("%s: new commits detected (old=%s new=%s)", key, state.get(key, "none")[:12], sha[:12])
-        if reindex_repo(org, name):
-            state[key] = sha
+        # ── Release poll → re-index release notes (only opted-in repos) ──
+        if repo.get("index_releases", True):
+            rel_date = fetch_latest_release_date(org, name, headers)
+            if rel_date and entry.get("release_date") != rel_date:
+                log.info("%s: new release (old=%s new=%s)", key, entry.get("release_date"), rel_date)
+                if reindex_releases(org, name):
+                    entry["release_date"] = rel_date
+                    changed = True
+                else:
+                    errors += 1
+
+        if changed:
+            state[key] = entry
             save_state(state)
             updated += 1
         else:
-            errors += 1
+            unchanged += 1
 
     log.info(
         "Watch cycle complete. Updated: %d, Errors: %d, Unchanged: %d",
         updated,
         errors,
-        len(repos) - updated - errors,
+        unchanged,
     )
 
 

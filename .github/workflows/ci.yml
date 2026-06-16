@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r server/requirements.txt
-          pip install pytest pytest-asyncio
+          pip install gitpython pyyaml pytest pytest-asyncio
 
       - name: Run tests
         run: pytest tests/ -v

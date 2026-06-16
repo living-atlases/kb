@@ -121,8 +121,9 @@ Once connected, the KB exposes:
 
 | Tool | Description |
 |---|---|
-| `query_la_kb` | Semantic search over all indexed repos |
-| `list_la_kb_collections` | List available collections with doc counts |
+| `query_ala_kb` | Semantic search over all indexed repos. Optional `content_type` to restrict to `release` (release notes / changelogs) or `source` (repo files) |
+| `list_ala_kb_collections` | List available collections with doc counts |
+| `get_ala_component_versions` | Latest release/version per component (from GitHub Releases) — for keeping deployment dependency lists up to date |
 
 ---
 
@@ -134,6 +135,20 @@ Once connected, the KB exposes:
 curl -X POST https://kb.l-a.site/api/query \
   -H 'Content-Type: application/json' \
   -d '{"question": "How do I configure collectory?", "collection": "la_toolkit_kb", "n_results": 5}'
+```
+
+Add `"content_type": "release"` to search only GitHub release notes / changelogs
+(or `"source"` for repo files).
+
+### Component versions
+
+GitHub Releases are indexed too; the latest version per component is aggregated
+into `data/versions.json` and served for keeping deployment dependency lists
+(e.g. `la-toolkit-backend/assets/dependencies.yaml`) up to date.
+
+```bash
+curl https://kb.l-a.site/api/versions                                  # all components
+curl https://kb.l-a.site/api/versions/AtlasOfLivingAustralia/collectory  # one component
 ```
 
 ### AI chat (RAG + streaming)

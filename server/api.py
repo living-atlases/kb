@@ -23,6 +23,7 @@ except ImportError:
 
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "/opt/la-toolkit-kb/data/chromadb/")
 EMBED_MODEL = "all-MiniLM-L6-v2"
+VERSIONS_FILE = os.environ.get("KB_VERSIONS_FILE", "/opt/la-toolkit-kb/data/versions.json")
 
 chroma_client: Optional[chromadb.PersistentClient] = None  # set on startup
 embed_model: Optional[SentenceTransformer] = None
@@ -43,6 +44,11 @@ class QueryRequest(BaseModel):
     question: str
     collection: str = "la_toolkit_kb"
     n_results: int = Field(default=5, ge=1, le=10)
+    content_type: Optional[str] = Field(
+        default=None,
+        description="Filter by content type: 'release' (GitHub release notes) or "
+        "'source' (repo files). None = both.",
+    )
 
 
 class QueryResult(BaseModel):
@@ -176,11 +182,15 @@ def query(req: QueryRequest):
     except Exception:
         raise HTTPException(status_code=404, detail=f"Collection '{req.collection}' not found")
 
-    results = col.query(
+    query_kwargs = dict(
         query_embeddings=embed_model.encode([req.question]).tolist(),
         n_results=req.n_results,
         include=["documents", "metadatas", "distances"],
     )
+    if req.content_type:
+        query_kwargs["where"] = {"content_type": req.content_type}
+
+    results = col.query(**query_kwargs)
 
     items = []
     for doc, meta, dist in zip(
@@ -209,6 +219,36 @@ def list_collections():
             count = 0
         result.append(CollectionInfo(name=name, count=count))
     return CollectionsResponse(collections=result)
+
+
+@app.get("/api/versions")
+def list_versions():
+    """Return latest release/version metadata for every indexed component.
+
+    Sourced from data/versions.json (written by kb_releases.py). Intended for
+    keeping la-toolkit-backend/assets/dependencies.yaml up to date — maps
+    "org/name" -> {latest_tag, latest_stable_tag, published_at, prerelease, url}.
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(VERSIONS_FILE)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        raise HTTPException(status_code=500, detail="versions.json unreadable")
+
+
+@app.get("/api/versions/{org}/{name}")
+def get_version(org: str, name: str):
+    """Return latest release/version metadata for a single component."""
+    versions = list_versions()
+    key = f"{org}/{name}"
+    if key not in versions:
+        raise HTTPException(status_code=404, detail=f"No version data for '{key}'")
+    return versions[key]
 
 
 @app.get("/api/repos")

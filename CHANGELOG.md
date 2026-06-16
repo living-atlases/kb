@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- GitHub Releases ingestion (`kb_releases.py`): release notes / changelogs are
+  chunked into the KB with `content_type="release"` metadata, and the latest
+  version per component is aggregated into `data/versions.json`.
+- REST API: `content_type` filter on `POST /api/query` (`release` / `source`),
+  plus `GET /api/versions` and `GET /api/versions/{org}/{name}`.
+- MCP tool `get_ala_component_versions` and a `content_type` option on
+  `query_ala_kb` — for keeping deployment dependency lists
+  (e.g. `la-toolkit-backend/assets/dependencies.yaml`) up to date.
+- Watcher polls the latest GitHub release per repo (releases can ship without
+  moving HEAD) and re-indexes release notes on change; state migrated to a
+  per-repo `{head_sha, release_date}` shape.
+- `la-toolkit-backend` added to the indexed repository manifest. Per-repo
+  `releases: false` opts a repo out of release indexing.
+
 ## [1.0.0] - 2026-06-16
 
 First public release.

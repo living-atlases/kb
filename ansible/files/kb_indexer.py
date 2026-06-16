@@ -26,7 +26,10 @@ from git import InvalidGitRepositoryError, Repo
 
 KB_HOME = Path(os.environ.get("KB_HOME", Path(__file__).parent.parent))
 REPOS_DIR = KB_HOME / "repos"
-CONFIG_FILE = KB_HOME / "config" / "repos.yml"
+# Deploy layout puts the manifest at {KB_HOME}/config/repos.yml; in the repo it
+# lives at ansible/repos.yml. KB_REPOS_YML overrides for local runs (matches
+# server/repos.py).
+CONFIG_FILE = Path(os.environ.get("KB_REPOS_YML", KB_HOME / "config" / "repos.yml"))
 CHROMA_PATH = Path(os.environ.get("CHROMA_PATH", KB_HOME / "data" / "chromadb"))
 COLLECTION_NAME = os.environ.get("KB_COLLECTION", "la_toolkit_kb")
 
@@ -85,11 +88,13 @@ def expand_repos(manifest: dict) -> list[dict]:
                 branch = default_branch
                 description = ""
                 has_wiki = False
+                index_releases = True
             else:
                 name = entry["name"]
                 branch = entry.get("branch", default_branch)
                 description = entry.get("description", "")
                 has_wiki = bool(entry.get("wiki", False))
+                index_releases = bool(entry.get("releases", True))
             repos.append(
                 {
                     "org": org,
@@ -98,6 +103,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                     "branch": branch,
                     "description": description,
                     "is_wiki": False,
+                    "index_releases": index_releases,
                 }
             )
             if has_wiki:
@@ -109,6 +115,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                         "branch": None,
                         "description": f"GitHub wiki for {org}/{name}",
                         "is_wiki": True,
+                        "index_releases": False,
                     }
                 )
     return repos
@@ -236,6 +243,7 @@ def index_repo(
                     "org": repo_meta["org"],
                     "file": str(rel),
                     "chunk": i,
+                    "content_type": "source",
                 }
             )
             count += 1

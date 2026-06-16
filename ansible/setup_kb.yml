@@ -25,6 +25,10 @@
     rest_api_port: 8080
     mcp_http_port: 3000
     reindex_repo: ""                     # override: -e "reindex_repo=ORG/NAME" to re-index one repo
+    # GitHub token for the Releases API (kb_releases.py / watcher). Without it the
+    # API is limited to ~60 req/h — too low for the full manifest. Defaults to the
+    # GH_TOKEN/GITHUB_TOKEN in the controller env; override with -e "gh_token=...".
+    gh_token: "{{ lookup('env', 'GH_TOKEN') | default(lookup('env', 'GITHUB_TOKEN'), true) }}"
 
   tasks:
 
@@ -239,6 +243,14 @@
         group: "{{ kb_user }}"
         mode: "0755"
 
+    - name: "Phase 7c: Install kb_releases.py"
+      ansible.builtin.copy:
+        src: kb_releases.py
+        dest: "{{ kb_home }}/scripts/kb_releases.py"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+
     # ── Phase 8: Index KB ─────────────────────────────────────────────────────
 
     - name: "Phase 8: Index tier1 repos (initial setup)"
@@ -271,6 +283,30 @@
       when: reindex_repo != ""
       tags: [reindex]
 
+    - name: "Phase 8d: Index GitHub releases + write versions.json (full)"
+      ansible.builtin.shell: |
+        source {{ kb_home }}/venv/bin/activate
+        cd {{ kb_home }}
+        python3 scripts/kb_releases.py --all
+      become_user: "{{ kb_user }}"
+      environment:
+        GH_TOKEN: "{{ gh_token }}"
+      timeout: 3600
+      when: reindex_repo == ""
+      tags: [reindex, reindex_releases]
+
+    - name: "Phase 8e: Index GitHub releases for single repo"
+      ansible.builtin.shell: |
+        source {{ kb_home }}/venv/bin/activate
+        cd {{ kb_home }}
+        python3 scripts/kb_releases.py --repo {{ reindex_repo }}
+      become_user: "{{ kb_user }}"
+      environment:
+        GH_TOKEN: "{{ gh_token }}"
+      timeout: 1800
+      when: reindex_repo != ""
+      tags: [reindex, reindex_releases]
+
     # ── Phase 9: Cron jobs ────────────────────────────────────────────────────
 
     - name: "Phase 9: Configure cron jobs"
@@ -279,7 +315,9 @@
         mode: "0644"
         content: |
           # Living Atlas KB — hourly watcher
-          # Polls each repo's default branch via git ls-remote; re-indexes only when new commits detected.
+          # Polls each repo's default branch (git ls-remote) AND latest GitHub release;
+          # re-indexes file content / release notes only when a change is detected.
+          GH_TOKEN={{ gh_token }}
           0 * * * * {{ kb_user }} source {{ kb_home }}/venv/bin/activate && python3 {{ kb_home }}/scripts/kb_watcher.py >> {{ kb_home }}/logs/watcher.log 2>&1
 
     # ── Phase 10: Systemd services ────────────────────────────────────────────
@@ -297,6 +335,7 @@
           User={{ kb_user }}
           WorkingDirectory={{ kb_home }}
           Environment=CHROMA_PATH={{ chroma_path }}
+          Environment=KB_VERSIONS_FILE={{ kb_home }}/data/versions.json
           ExecStart={{ kb_home }}/venv/bin/python -m uvicorn server.api:app --host 127.0.0.1 --port {{ rest_api_port }}
           Restart=always
           RestartSec=5

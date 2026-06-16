@@ -75,6 +75,18 @@ def test_query_custom_collection(test_client, mock_client):
     mock_client.get_collection.assert_called_with("la-toolkit-tier1")
 
 
+def test_query_content_type_adds_where_filter(test_client, mock_chroma):
+    test_client.post("/api/query", json={"question": "what changed", "content_type": "release"})
+    _, kwargs = mock_chroma.query.call_args
+    assert kwargs["where"] == {"content_type": "release"}
+
+
+def test_query_without_content_type_has_no_where(test_client, mock_chroma):
+    test_client.post("/api/query", json={"question": "test"})
+    _, kwargs = mock_chroma.query.call_args
+    assert "where" not in kwargs
+
+
 def test_query_n_results_capped_at_10(test_client, mock_chroma):
     # n_results > 10 is rejected by pydantic validation (le=10 constraint)
     response = test_client.post("/api/query", json={"question": "test", "n_results": 99})
@@ -100,3 +112,36 @@ def test_health_check(test_client):
     response = test_client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_versions_endpoint_reads_file(test_client, tmp_path):
+    import server.api as api_module
+    vfile = tmp_path / "versions.json"
+    vfile.write_text('{"AtlasOfLivingAustralia/collectory": {"latest_tag": "v3.2.5"}}')
+    original = api_module.VERSIONS_FILE
+    api_module.VERSIONS_FILE = str(vfile)
+    try:
+        all_resp = test_client.get("/api/versions")
+        assert all_resp.status_code == 200
+        assert all_resp.json()["AtlasOfLivingAustralia/collectory"]["latest_tag"] == "v3.2.5"
+
+        one_resp = test_client.get("/api/versions/AtlasOfLivingAustralia/collectory")
+        assert one_resp.status_code == 200
+        assert one_resp.json()["latest_tag"] == "v3.2.5"
+
+        missing = test_client.get("/api/versions/foo/bar")
+        assert missing.status_code == 404
+    finally:
+        api_module.VERSIONS_FILE = original
+
+
+def test_versions_endpoint_empty_when_no_file(test_client, tmp_path):
+    import server.api as api_module
+    original = api_module.VERSIONS_FILE
+    api_module.VERSIONS_FILE = str(tmp_path / "nonexistent.json")
+    try:
+        resp = test_client.get("/api/versions")
+        assert resp.status_code == 200
+        assert resp.json() == {}
+    finally:
+        api_module.VERSIONS_FILE = original
