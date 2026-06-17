@@ -251,33 +251,46 @@
         group: "{{ kb_user }}"
         mode: "0755"
 
+    - name: "Phase 7d: Install GitHub token env file (for releases API)"
+      ansible.builtin.copy:
+        # Persisted on the host so the watcher cron and manual kb_releases.py runs
+        # share the same token. Kept 0600 instead of inlining it in /etc/cron.d.
+        dest: "{{ kb_home }}/.gh_token"
+        content: "export GH_TOKEN={{ gh_token }}\n"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0600"
+      no_log: true
+      when: gh_token | length > 0
+      tags: [reindex, reindex_releases]
+
     # ── Phase 8: Index KB ─────────────────────────────────────────────────────
 
+    # NOTE: tasks call the venv's python directly (not `source .../activate`) so
+    # they work under /bin/sh (dash), where `source` does not exist.
+
     - name: "Phase 8: Index tier1 repos (initial setup)"
-      ansible.builtin.shell: |
-        source {{ kb_home }}/venv/bin/activate
-        cd {{ kb_home }}
-        python3 scripts/kb_indexer.py --tier1
+      ansible.builtin.shell: "{{ kb_home }}/venv/bin/python3 scripts/kb_indexer.py --tier1"
+      args:
+        chdir: "{{ kb_home }}"
       become_user: "{{ kb_user }}"
       timeout: 3600
       when: reindex_repo == ""
       tags: [reindex, reindex_tier1]
 
     - name: "Phase 8b: Index all repos (full re-index)"
-      ansible.builtin.shell: |
-        source {{ kb_home }}/venv/bin/activate
-        cd {{ kb_home }}
-        python3 scripts/kb_indexer.py --all
+      ansible.builtin.shell: "{{ kb_home }}/venv/bin/python3 scripts/kb_indexer.py --all"
+      args:
+        chdir: "{{ kb_home }}"
       become_user: "{{ kb_user }}"
       timeout: 10800
       when: reindex_repo == ""
       tags: [reindex_all]
 
     - name: "Phase 8c: Index single repo"
-      ansible.builtin.shell: |
-        source {{ kb_home }}/venv/bin/activate
-        cd {{ kb_home }}
-        python3 scripts/kb_indexer.py --repo {{ reindex_repo }}
+      ansible.builtin.shell: "{{ kb_home }}/venv/bin/python3 scripts/kb_indexer.py --repo {{ reindex_repo }}"
+      args:
+        chdir: "{{ kb_home }}"
       become_user: "{{ kb_user }}"
       timeout: 1800
       when: reindex_repo != ""
@@ -285,24 +298,22 @@
 
     - name: "Phase 8d: Index GitHub releases + write versions.json (full)"
       ansible.builtin.shell: |
-        source {{ kb_home }}/venv/bin/activate
-        cd {{ kb_home }}
-        python3 scripts/kb_releases.py --all
+        [ -f {{ kb_home }}/.gh_token ] && . {{ kb_home }}/.gh_token
+        {{ kb_home }}/venv/bin/python3 scripts/kb_releases.py --all
+      args:
+        chdir: "{{ kb_home }}"
       become_user: "{{ kb_user }}"
-      environment:
-        GH_TOKEN: "{{ gh_token }}"
       timeout: 3600
       when: reindex_repo == ""
       tags: [reindex, reindex_releases]
 
     - name: "Phase 8e: Index GitHub releases for single repo"
       ansible.builtin.shell: |
-        source {{ kb_home }}/venv/bin/activate
-        cd {{ kb_home }}
-        python3 scripts/kb_releases.py --repo {{ reindex_repo }}
+        [ -f {{ kb_home }}/.gh_token ] && . {{ kb_home }}/.gh_token
+        {{ kb_home }}/venv/bin/python3 scripts/kb_releases.py --repo {{ reindex_repo }}
+      args:
+        chdir: "{{ kb_home }}"
       become_user: "{{ kb_user }}"
-      environment:
-        GH_TOKEN: "{{ gh_token }}"
       timeout: 1800
       when: reindex_repo != ""
       tags: [reindex, reindex_releases]
@@ -317,8 +328,9 @@
           # Living Atlas KB — hourly watcher
           # Polls each repo's default branch (git ls-remote) AND latest GitHub release;
           # re-indexes file content / release notes only when a change is detected.
-          GH_TOKEN={{ gh_token }}
-          0 * * * * {{ kb_user }} source {{ kb_home }}/venv/bin/activate && python3 {{ kb_home }}/scripts/kb_watcher.py >> {{ kb_home }}/logs/watcher.log 2>&1
+          # GH_TOKEN is sourced from {{ kb_home }}/.gh_token (0600) — not inlined here.
+          # Calls the venv python directly (no `source activate`) so it runs under /bin/sh.
+          0 * * * * {{ kb_user }} { [ -f {{ kb_home }}/.gh_token ] && . {{ kb_home }}/.gh_token; {{ kb_home }}/venv/bin/python3 {{ kb_home }}/scripts/kb_watcher.py; } >> {{ kb_home }}/logs/watcher.log 2>&1
 
     # ── Phase 10: Systemd services ────────────────────────────────────────────
 

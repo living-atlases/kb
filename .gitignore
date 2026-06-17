@@ -14,6 +14,10 @@ internal-docs/
 # Ansible inventory with real host (use inventory.example.ini as template)
 inventory.ini
 
+# GitHub token env file (never commit)
+.gh_token
+ansible/secrets.yml
+
 # Generated artifacts
 .dart_tool/
 .pytest_cache/

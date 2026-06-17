@@ -233,6 +233,20 @@ included Ansible playbooks.
 - **Ansible** 2.9+ on your control machine.
 - A DNS name pointing at the host if you want public HTTPS (TLS is terminated by nginx;
   see `ansible/files/copy-kb-cert.sh` for a Let's Encrypt deploy-hook example).
+- **A GitHub token** for the Releases API (used to index release notes and build
+  `versions.json`). All indexed repos are public, so the most restricted token works:
+  a fine-grained PAT with *Public repositories (read-only)*, or a classic PAT with no
+  scopes. Without one the API is throttled to ~60 req/h (vs 5000 with a token).
+
+  Provide it via the `gh_token` variable — by default read from `GH_TOKEN`/`GITHUB_TOKEN`
+  in your control-machine env:
+
+  ```bash
+  export GH_TOKEN=github_pat_xxx          # or: -e "gh_token=github_pat_xxx"
+  ```
+
+  The playbook writes it to `{{ kb_home }}/.gh_token` (mode `0600`, owned by `kb_user`)
+  on the host; the hourly watcher and manual `kb_releases.py` runs source it from there.
 
 ### Steps
 
@@ -266,13 +280,22 @@ included Ansible playbooks.
 
 ### How indexing stays fresh
 
-`kb_watcher.py` runs hourly (cron, installed by the playbook) and polls each repo with
-`git ls-remote`; it re-indexes **only** repositories whose default branch has new commits.
-To force a re-index of a single repo:
+`kb_watcher.py` runs hourly (cron, installed by the playbook). It polls each repo with
+`git ls-remote` (re-indexing file content when the default branch has new commits) **and**
+the GitHub Releases API (re-indexing release notes + refreshing `versions.json` when a new
+release is published). To force a re-index of a single repo:
 
 ```bash
 ansible-playbook -i inventory.ini ansible/setup_kb.yml \
   --tags reindex -e "reindex_repo=Org/name"
+```
+
+To add release indexing to an already-deployed host without re-indexing all source:
+
+```bash
+export GH_TOKEN=github_pat_xxx
+ansible-playbook -i inventory.ini ansible/setup_kb.yml \
+  --skip-tags reindex_tier1,reindex_all
 ```
 
 ---
