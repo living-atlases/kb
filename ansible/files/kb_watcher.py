@@ -2,18 +2,20 @@
 """
 kb_watcher.py — Living Atlas KB commit watcher
 
-Polls each repo in config/repos.yml for two kinds of change and re-indexes only
-what changed:
+Polls each repo in config/repos.yml for three kinds of change and re-indexes
+only what changed:
   - new commits → latest SHA via `git ls-remote` (default branch / HEAD) →
     kb_indexer.py --repo
   - new GitHub release → latest release date via the GitHub API →
     kb_releases.py --repo
+  - updated issues/PRs (ALA repos by default) → newest updated_at via the
+    GitHub API → kb_issues.py --repo (incremental from its own high-water mark)
 
 Releases can be published without moving the default-branch HEAD (a tag on an
-older commit), so the SHA poll alone would miss them — hence the separate poll.
+older commit), so the SHA poll alone would miss them — hence the separate polls.
 
 State stored in: {KB_HOME}/data/watcher_state.json
-  { "ORG/NAME": {"head_sha": "<sha>", "release_date": "<iso8601>"}, ... }
+  { "ORG/NAME": {"head_sha": "<sha>", "release_date": "<iso>", "issue_update": "<iso>"}, ... }
 Legacy plain-string SHA values are migrated transparently.
 
 Cron: 0 * * * * (every hour)
@@ -36,10 +38,14 @@ CONFIG_FILE = KB_HOME / "config" / "repos.yml"
 STATE_FILE = KB_HOME / "data" / "watcher_state.json"
 INDEXER = KB_HOME / "scripts" / "kb_indexer.py"
 RELEASER = KB_HOME / "scripts" / "kb_releases.py"
+ISSUER = KB_HOME / "scripts" / "kb_issues.py"
 VENV_PYTHON = KB_HOME / "venv" / "bin" / "python3"
 
 REQUEST_TIMEOUT = 20  # seconds
 GITHUB_API = "https://api.github.com"
+
+# Orgs whose issues/PRs are indexed by default (mirrors kb_indexer.ALA_ORGS).
+ALA_ORGS = {"AtlasOfLivingAustralia", "living-atlases"}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,11 +100,13 @@ def expand_repos(manifest: dict) -> list[dict]:
                 branch = default_branch
                 has_wiki = False
                 index_releases = True
+                index_issues = org in ALA_ORGS
             else:
                 name = entry["name"]
                 branch = entry.get("branch", default_branch)
                 has_wiki = bool(entry.get("wiki", False))
                 index_releases = bool(entry.get("releases", True))
+                index_issues = bool(entry.get("issues", org in ALA_ORGS))
             repos.append(
                 {
                     "org": org,
@@ -106,6 +114,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                     "branch": branch,
                     "is_wiki": False,
                     "index_releases": index_releases,
+                    "index_issues": index_issues,
                     "url": f"{base_url}/{name}.git",
                 }
             )
@@ -117,6 +126,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                         "branch": None,
                         "is_wiki": True,
                         "index_releases": False,
+                        "index_issues": False,
                         "url": f"{base_url}/{name}.wiki.git",
                     }
                 )
@@ -131,6 +141,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                 "branch": None,
                 "is_wiki": False,
                 "index_releases": False,
+                "index_issues": False,
                 "url": None,
                 "is_local": True,
                 "local_path": src["path"],
@@ -223,6 +234,27 @@ def fetch_latest_release_date(org: str, name: str, headers: dict) -> str | None:
     return resp.json().get("published_at")
 
 
+def fetch_latest_issue_update(org: str, name: str, headers: dict) -> str | None:
+    """Return the newest issue/PR `updated_at` for a repo, or None.
+
+    A single cheap call (per_page=1, sorted updated-desc) used only to decide
+    whether to spawn the full kb_issues incremental sync. Includes PRs (the
+    /issues endpoint returns both). Any error → None (treated as "no change").
+    """
+    url = f"{GITHUB_API}/repos/{org}/{name}/issues"
+    params = {"state": "all", "sort": "updated", "direction": "desc", "per_page": 1}
+    try:
+        resp = httpx.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
+    except httpx.RequestError as e:
+        log.warning("%s/%s: issues poll error — %s", org, name, e)
+        return None
+    if resp.status_code != 200:
+        log.debug("%s/%s: issues poll HTTP %s", org, name, resp.status_code)
+        return None
+    items = resp.json()
+    return items[0].get("updated_at") if items else None
+
+
 # ── Indexer invocation ────────────────────────────────────────────────────────
 
 def _run_indexer(script: Path, org: str, name: str, label: str) -> bool:
@@ -259,6 +291,11 @@ def reindex_repo(org: str, name: str) -> bool:
 def reindex_releases(org: str, name: str) -> bool:
     """Re-index repo GitHub releases (new release)."""
     return _run_indexer(RELEASER, org, name, "Re-indexing releases")
+
+
+def reindex_issues(org: str, name: str) -> bool:
+    """Incrementally re-index repo GitHub issues/PRs (kb_issues tracks its own since)."""
+    return _run_indexer(ISSUER, org, name, "Re-indexing issues")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -324,6 +361,19 @@ def main() -> None:
                 log.info("%s: new release (old=%s new=%s)", key, entry.get("release_date"), rel_date)
                 if reindex_releases(org, name):
                     entry["release_date"] = rel_date
+                    changed = True
+                else:
+                    errors += 1
+
+        # ── Issue poll → re-index issues/PRs (only opted-in repos) ──
+        # Cheap newest-updated probe gates the (model-loading) kb_issues run, which
+        # then does the full incremental sync from its own high-water mark.
+        if repo.get("index_issues", False):
+            issue_update = fetch_latest_issue_update(org, name, headers)
+            if issue_update and entry.get("issue_update") != issue_update:
+                log.info("%s: updated issues (old=%s new=%s)", key, entry.get("issue_update"), issue_update)
+                if reindex_issues(org, name):
+                    entry["issue_update"] = issue_update
                     changed = True
                 else:
                     errors += 1

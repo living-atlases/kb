@@ -37,6 +37,10 @@ CHUNK_SIZE = 800          # characters
 CHUNK_OVERLAP = 100
 UPSERT_BATCH = 512        # chunks per ChromaDB upsert (batched = far faster than 1-by-1)
 
+# Orgs whose issues/PRs are indexed by default (kb_issues.py). GBIF repos are
+# high-volume, so issue indexing is opt-in for them (`issues: true` per repo).
+ALA_ORGS = {"AtlasOfLivingAustralia", "living-atlases"}
+
 # Text file extensions to index (everything else skipped silently)
 TEXT_EXTENSIONS = {
     ".md", ".txt", ".rst", ".adoc",
@@ -89,12 +93,14 @@ def expand_repos(manifest: dict) -> list[dict]:
                 description = ""
                 has_wiki = False
                 index_releases = True
+                index_issues = org in ALA_ORGS
             else:
                 name = entry["name"]
                 branch = entry.get("branch", default_branch)
                 description = entry.get("description", "")
                 has_wiki = bool(entry.get("wiki", False))
                 index_releases = bool(entry.get("releases", True))
+                index_issues = bool(entry.get("issues", org in ALA_ORGS))
             repos.append(
                 {
                     "org": org,
@@ -104,6 +110,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                     "description": description,
                     "is_wiki": False,
                     "index_releases": index_releases,
+                    "index_issues": index_issues,
                     "content_type": "source",
                 }
             )
@@ -117,6 +124,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                         "description": f"GitHub wiki for {org}/{name}",
                         "is_wiki": True,
                         "index_releases": False,
+                        "index_issues": False,
                         "content_type": "wiki",
                     }
                 )
@@ -133,6 +141,7 @@ def expand_repos(manifest: dict) -> list[dict]:
                 "description": src.get("description", ""),
                 "is_wiki": False,
                 "index_releases": False,
+                "index_issues": False,
                 "is_local": True,
                 "local_path": src["path"],
                 "content_type": src.get("source_type", "faq"),

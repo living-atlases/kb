@@ -46,8 +46,9 @@ class QueryRequest(BaseModel):
     n_results: int = Field(default=5, ge=1, le=10)
     content_type: Optional[str] = Field(
         default=None,
-        description="Filter by content type: 'release' (GitHub release notes) or "
-        "'source' (repo files). None = both.",
+        description="Filter by content type: 'source' (repo files), 'release' "
+        "(GitHub release notes), 'issue'/'pr' (GitHub issues & pull requests), "
+        "'wiki', or 'faq'. None = all.",
     )
 
 
@@ -89,7 +90,7 @@ class AnswerRequest(BaseModel):
     content_type: Optional[str] = Field(
         default=None,
         description="Optionally restrict retrieval to a content_type "
-        "('faq', 'wiki', 'source', 'release').",
+        "('faq', 'wiki', 'source', 'release', 'issue', 'pr').",
     )
 
 
@@ -112,6 +113,10 @@ CONTENT_TYPE_BOOST = {
     "faq": 0.08,
     "slack_thread": 0.06,
     "wiki": 0.04,
+    # Issues/PRs are useful but noisier than code/docs — de-rank slightly so they
+    # surface only when clearly relevant, never above curated answers or source.
+    "issue": -0.04,
+    "pr": -0.04,
 }
 
 
