@@ -7,6 +7,14 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- GitHub Issues & PRs ingestion (`kb_issues.py`): issues and pull requests are
+  chunked into the KB with `content_type="issue"`/`"pr"` metadata — bug
+  workarounds, design discussions and Q&A that never reach the docs. Indexed for
+  ALA orgs by default (GBIF repos opt-in via `issues: true`); bot/dependabot
+  noise dropped, comments capped, incremental via a per-repo `updated_at`
+  high-water mark. The watcher polls updated issues hourly and re-indexes on
+  change (`issue_update` added to watcher state). Issues/PRs are de-ranked
+  slightly in `/api/answer` so curated answers and source still win.
 - GitHub Releases ingestion (`kb_releases.py`): release notes / changelogs are
   chunked into the KB with `content_type="release"` metadata, and the latest
   version per component is aggregated into `data/versions.json`.

@@ -6,6 +6,10 @@
 #         Override per-repo with `branch:` only to index a NON-default branch.
 # Releases: GitHub Releases are indexed by kb_releases.py (content_type=release)
 #           and aggregated into data/versions.json. Opt out with `releases: false`.
+# Issues:   GitHub issues & PRs are indexed by kb_issues.py (content_type=issue|pr)
+#           for ALA orgs (AtlasOfLivingAustralia, living-atlases) by DEFAULT.
+#           GBIF repos are high-volume → opt-in per repo with `issues: true`.
+#           Opt an ALA repo out with `issues: false`.
 # To add a repo: add the name under its org. Open a PR.
 #
 # Tier1: repos indexed first during initial setup (not a scheduling distinction).

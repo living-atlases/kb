@@ -121,7 +121,7 @@ Once connected, the KB exposes:
 
 | Tool | Description |
 |---|---|
-| `query_ala_kb` | Semantic search over all indexed repos. Optional `content_type` to restrict to `release` (release notes / changelogs) or `source` (repo files) |
+| `query_ala_kb` | Semantic search over all indexed repos. Optional `content_type` to restrict to `source` (repo files), `release` (release notes / changelogs), `issue`/`pr` (GitHub issues & pull requests), `wiki`, or `faq` |
 | `list_ala_kb_collections` | List available collections with doc counts |
 | `get_ala_component_versions` | Latest release/version per component (from GitHub Releases) — for keeping deployment dependency lists up to date |
 
@@ -138,7 +138,16 @@ curl -X POST https://kb.l-a.site/api/query \
 ```
 
 Add `"content_type": "release"` to search only GitHub release notes / changelogs
-(or `"source"` for repo files).
+(or `"source"` for repo files, `"issue"`/`"pr"` for GitHub issues & pull requests).
+
+### GitHub issues & pull requests
+
+Issues and PRs of ALA repos (`AtlasOfLivingAustralia`, `living-atlases`) are
+indexed too (`content_type=issue|pr`) — they capture bug workarounds, design
+discussions and "how do I…" Q&A that never reach the docs. Bot/dependabot noise
+is dropped and only the first few comments per thread are kept, so the index
+stays lean. GBIF repos are high-volume, so issue indexing is opt-in there
+(`issues: true` in [`ansible/repos.yml`](ansible/repos.yml)).
 
 ### Component versions
 
@@ -172,8 +181,11 @@ data: [DONE]
 ## Indexed Repositories
 
 All repos are defined in [`ansible/repos.yml`](ansible/repos.yml) — single source of truth.
+Every repo is refreshed by the same hourly watcher (see *How indexing stays fresh* below);
+the tiers below are only the **priority order** used when building the index from scratch,
+not a per-tier update cadence.
 
-### Tier 1 — Daily updates
+### Tier 1 — Indexed first (setup priority)
 
 | Repository | Org | Description |
 |---|---|---|
@@ -181,7 +193,7 @@ All repos are defined in [`ansible/repos.yml`](ansible/repos.yml) — single sou
 | [la-toolkit](https://github.com/living-atlases/la-toolkit) | living-atlases | LA Toolkit: conversational project configuration |
 | [gbif-pipelines](https://github.com/gbif/pipelines) | gbif | GBIF Pipelines: DarwinCore data processing (livingatlas module) |
 
-### Tier 2 — Weekly updates (Sundays)
+### Tier 2 — Indexed after Tier 1
 
 | Repository | Org | Description |
 |---|---|---|

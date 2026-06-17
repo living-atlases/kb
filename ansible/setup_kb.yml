@@ -251,6 +251,14 @@
         group: "{{ kb_user }}"
         mode: "0755"
 
+    - name: "Phase 7d-bis: Install kb_issues.py"
+      ansible.builtin.copy:
+        src: kb_issues.py
+        dest: "{{ kb_home }}/scripts/kb_issues.py"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+
     - name: "Phase 7d: Install GitHub token env file (for releases API)"
       ansible.builtin.copy:
         # Persisted on the host so the watcher cron and manual kb_releases.py runs
@@ -318,6 +326,28 @@
       when: reindex_repo != ""
       tags: [reindex, reindex_releases]
 
+    - name: "Phase 8f: Index GitHub issues/PRs (all opted-in repos)"
+      ansible.builtin.shell: |
+        [ -f {{ kb_home }}/.gh_token ] && . {{ kb_home }}/.gh_token
+        {{ kb_home }}/venv/bin/python3 scripts/kb_issues.py --all
+      args:
+        chdir: "{{ kb_home }}"
+      become_user: "{{ kb_user }}"
+      timeout: 7200
+      when: reindex_repo == ""
+      tags: [reindex, reindex_issues]
+
+    - name: "Phase 8g: Index GitHub issues/PRs for single repo"
+      ansible.builtin.shell: |
+        [ -f {{ kb_home }}/.gh_token ] && . {{ kb_home }}/.gh_token
+        {{ kb_home }}/venv/bin/python3 scripts/kb_issues.py --repo {{ reindex_repo }}
+      args:
+        chdir: "{{ kb_home }}"
+      become_user: "{{ kb_user }}"
+      timeout: 1800
+      when: reindex_repo != ""
+      tags: [reindex, reindex_issues]
+
     # ── Phase 9: Cron jobs ────────────────────────────────────────────────────
 
     - name: "Phase 9: Configure cron jobs"
@@ -326,8 +356,8 @@
         mode: "0644"
         content: |
           # Living Atlas KB — hourly watcher
-          # Polls each repo's default branch (git ls-remote) AND latest GitHub release;
-          # re-indexes file content / release notes only when a change is detected.
+          # Polls each repo's default branch (git ls-remote), latest GitHub release,
+          # and updated issues/PRs (ALA repos); re-indexes only what changed.
           # GH_TOKEN is sourced from {{ kb_home }}/.gh_token (0600) — not inlined here.
           # Calls the venv python directly (no `source activate`) so it runs under /bin/sh.
           0 * * * * {{ kb_user }} { [ -f {{ kb_home }}/.gh_token ] && . {{ kb_home }}/.gh_token; {{ kb_home }}/venv/bin/python3 {{ kb_home }}/scripts/kb_watcher.py; } >> {{ kb_home }}/logs/watcher.log 2>&1
