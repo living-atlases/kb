@@ -74,6 +74,14 @@ orgs:
       - name: la-toolkit-backend
         description: "la-toolkit backend; assets/dependencies.yaml tracks ALA component versions + deps"
       - base-branding
+      - name: la-docker-compose
+        description: "Docker Compose stack for Living Atlas portals"
+      - name: la-docker-images
+        description: "Build repo for Living Atlas Docker images"
+      - name: generator-living-atlas
+        description: "Yeoman generator for Living Atlas Ansible inventories"
+      - name: gbif-taxonomy-for-la
+        description: "Utilities to adapt the GBIF Backbone Taxonomy for LA portals"
 
   gbif:
     base_url: https://github.com/gbif

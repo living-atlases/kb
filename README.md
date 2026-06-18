@@ -225,6 +225,10 @@ not a per-tier update cadence.
 | [biocollect](https://github.com/AtlasOfLivingAustralia/biocollect) | AtlasOfLivingAustralia | Biological data collection application |
 | [commonui-bs5-2024](https://github.com/AtlasOfLivingAustralia/commonui-bs5-2024) | AtlasOfLivingAustralia | Bootstrap 5 common UI components for LA portals |
 | [base-branding](https://github.com/living-atlases/base-branding) | living-atlases | LA base branding and theming |
+| [la-docker-compose](https://github.com/living-atlases/la-docker-compose) | living-atlases | Docker Compose stack for Living Atlas portals |
+| [la-docker-images](https://github.com/living-atlases/la-docker-images) | living-atlases | Build repo for Living Atlas Docker images |
+| [generator-living-atlas](https://github.com/living-atlases/generator-living-atlas) | living-atlases | Yeoman generator for LA Ansible inventories |
+| [gbif-taxonomy-for-la](https://github.com/living-atlases/gbif-taxonomy-for-la) | living-atlases | Adapts the GBIF Backbone Taxonomy for LA portals |
 | [ipt](https://github.com/gbif/ipt) | gbif | GBIF Integrated Publishing Toolkit — DarwinCore data publishing |
 | [gbif-api](https://github.com/gbif/gbif-api) | gbif | GBIF public Java API model — shared types/enums |
 | [dwca-io](https://github.com/gbif/dwca-io) | gbif | Darwin Core Archive reader/writer library |
@@ -316,21 +320,26 @@ ansible-playbook -i inventory.ini ansible/setup_kb.yml \
 
 ### Add a repository to the index
 
-Open a PR editing [`ansible/repos.yml`](ansible/repos.yml) — the single source of truth:
+Open a PR editing [`ansible/repos.yml`](ansible/repos.yml) — the single source of truth.
+Add the repo under its org's `repos:` list (the URL is built as `{base_url}/{name}.git`):
 
 ```yaml
-tiers:
-  tier2:
+orgs:
+  YourOrg:
+    base_url: https://github.com/YourOrg
     repos:
-      - name: your-repo
-        org: YourOrg
-        url: https://github.com/YourOrg/your-repo.git
-        # branch is auto-detected from the repo's default HEAD; override only if needed.
-        patterns:
-          - "**/*.md"
-          - "src/**/*.java"   # adjust to your stack
+      - your-repo                          # bare name is enough
+      - name: your-other-repo              # or a mapping to add metadata
         description: "Short description of what this service does"
+        # branch: is auto-detected from the repo's default HEAD — set only to
+        #         index a NON-default branch.
+        # wiki: true        — also index the repo's GitHub wiki.
+        # releases: false   — opt out of GitHub Releases indexing.
+        # issues: true/false — ALA orgs index issues/PRs by default; GBIF opt-in.
 ```
+
+File-type filtering is global, not per-repo: the `blocklist:` at the bottom of
+`repos.yml` excludes vendored/generated/test paths and binaries for every repo.
 
 **Criteria:** actively maintained public LA/GBIF ecosystem service with meaningful docs or config.
 After merge, the maintainer re-runs `ansible/setup_kb.yml` (or the watcher picks it up) to index it.
