@@ -378,7 +378,7 @@ orgs:
             Text(
               'Tier 1 repos are indexed first during initial setup. All repos '
               'are then re-indexed on demand by the watcher (hourly poll of '
-              'commit feeds).',
+              'commits, GitHub releases and issues/PRs).',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
@@ -572,10 +572,12 @@ class _ApiSection extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         const _ApiEndpoint(
-          method: 'GET',
+          method: 'POST',
           path: '/api/query',
-          description: 'Semantic search. Params: q, collection, n_results',
-          example: 'GET /api/query?q=how+to+configure+collectory&n_results=5',
+          description: 'Semantic search. Body: question, collection, n_results, '
+              'content_type (optional: source, release, issue, pr, wiki, faq)',
+          example: '{"question": "how to configure collectory", '
+              '"n_results": 5}',
         ),
         const SizedBox(height: 8),
         const _ApiEndpoint(
@@ -591,6 +593,14 @@ class _ApiSection extends StatelessWidget {
           path: '/api/collections',
           description: 'List available ChromaDB collections',
           example: 'GET /api/collections',
+        ),
+        const SizedBox(height: 8),
+        const _ApiEndpoint(
+          method: 'GET',
+          path: '/api/versions',
+          description: 'Latest release/version per component (from GitHub '
+              'Releases); add /{org}/{name} for one component',
+          example: 'GET /api/versions/AtlasOfLivingAustralia/collectory',
         ),
       ],
     );
