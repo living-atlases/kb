@@ -227,6 +227,9 @@
 
     # ── Phase 7: KB indexer + watcher scripts ────────────────────────────────
 
+    # Script installs are tagged so a targeted reindex run (e.g.
+    # --tags reindex_issues) also refreshes the scripts it depends on, not just
+    # a full play. kb_indexer/kb_watcher back both the release and issue flows.
     - name: "Phase 7: Install kb_indexer.py"
       ansible.builtin.copy:
         src: kb_indexer.py
@@ -234,6 +237,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
+      tags: [reindex, reindex_releases, reindex_issues]
 
     - name: "Phase 7b: Install kb_watcher.py"
       ansible.builtin.copy:
@@ -242,6 +246,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
+      tags: [reindex, reindex_releases, reindex_issues]
 
     - name: "Phase 7c: Install kb_releases.py"
       ansible.builtin.copy:
@@ -250,6 +255,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
+      tags: [reindex, reindex_releases]
 
     - name: "Phase 7d-bis: Install kb_issues.py"
       ansible.builtin.copy:
@@ -258,6 +264,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
+      tags: [reindex, reindex_issues]
 
     - name: "Phase 7d: Install GitHub token env file (for releases API)"
       ansible.builtin.copy:
@@ -270,7 +277,7 @@
         mode: "0600"
       no_log: true
       when: gh_token | length > 0
-      tags: [reindex, reindex_releases]
+      tags: [reindex, reindex_releases, reindex_issues]
 
     # ── Phase 8: Index KB ─────────────────────────────────────────────────────
 
