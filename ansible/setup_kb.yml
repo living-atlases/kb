@@ -201,6 +201,8 @@
 
     # ── Phase 5: Repo configs ─────────────────────────────────────────────────
 
+    # Tagged like the script installs (Phase 7) so a targeted reindex run syncs the
+    # manifest first — kb_indexer/kb_releases/kb_issues all resolve --repo against it.
     - name: "Phase 5: Copy repos manifest"
       ansible.builtin.copy:
         src: repos.yml
@@ -208,6 +210,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0644"
+      tags: [reindex, reindex_releases, reindex_issues, reindex_tier1, reindex_all]
 
     # ── Phase 6: Server files ─────────────────────────────────────────────────
 
