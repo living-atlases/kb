@@ -99,6 +99,8 @@ orgs:
       - name: registry
         wiki: true
       - checklistbank
+      - name: la-website
+        description: "Living Atlases community website — participant profiles, history, events, resources (living-atlases.gbif.org)"
 
 # Repos indexed first during setup (priority order).
 # All other repos are indexed after these complete.
@@ -174,3 +176,9 @@ blocklist:
   - "*.tar.gz"
   - "*.war"
   - "*.ear"
+  # ── Jekyll / static-site plumbing (gbif/la-website) ──
+  - "_layouts/"           # Jekyll templates (HTML), not docs
+  - "_includes/"          # Jekyll partials
+  - "_sass/"              # stylesheets
+  - "_data/"              # slider/summary CSV+YAML (tabular, low semantic value)
+  - "_site/"              # compiled output (in case it gets committed)

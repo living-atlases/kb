@@ -43,7 +43,7 @@ ALA_ORGS = {"AtlasOfLivingAustralia", "living-atlases"}
 
 # Text file extensions to index (everything else skipped silently)
 TEXT_EXTENSIONS = {
-    ".md", ".txt", ".rst", ".adoc",
+    ".md", ".markdown", ".txt", ".rst", ".adoc",
     ".java", ".groovy", ".kt",
     ".py", ".js", ".ts", ".dart",
     ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg", ".conf", ".properties",

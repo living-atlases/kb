@@ -235,6 +235,7 @@ not a per-tier update cadence.
 | [occurrence](https://github.com/gbif/occurrence) | gbif | GBIF occurrence processing and download service |
 | [registry](https://github.com/gbif/registry) | gbif | GBIF registry of datasets, organizations, nodes, installations |
 | [checklistbank](https://github.com/gbif/checklistbank) | gbif | GBIF ChecklistBank — taxonomic checklist storage and API |
+| [la-website](https://github.com/gbif/la-website) | gbif | Living Atlases community website — participant profiles, history, events, resources |
 
 ---
 
