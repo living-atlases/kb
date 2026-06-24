@@ -381,7 +381,19 @@ def main() -> None:
     if args.repo:
         repos = [r for r in repos if f"{r['org']}/{r['name']}" == args.repo]
         if not repos:
-            log.error("Repo not found or issue-indexing disabled: %s", args.repo)
+            # Distinguish an opted-out repo (graceful skip) from a real typo. A repo
+            # present in the manifest but without index_issues is intentionally
+            # excluded (e.g. GBIF opt-out) — exit 0 so a targeted reindex doesn't
+            # fail. Only a genuinely unknown repo is an error.
+            known = {
+                f"{r['org']}/{r['name']}"
+                for r in expand_repos(manifest)
+                if not r.get("is_wiki") and not r.get("is_local")
+            }
+            if args.repo in known:
+                log.info("Issue-indexing disabled for %s — skipping", args.repo)
+                sys.exit(0)
+            log.error("Repo not found: %s", args.repo)
             sys.exit(1)
         log.info("Indexing issues for single repo: %s", args.repo)
     else:
