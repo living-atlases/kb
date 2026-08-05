@@ -5,13 +5,49 @@ from mcp.server.fastmcp import FastMCP
 
 REST_API_URL = "http://localhost:8080"
 
+# The REST API answers in milliseconds when healthy, but a ChromaDB operation
+# can stall it for far longer. 10s was tight enough that any hiccup surfaced as
+# a bare timeout, so give the plain lookups real headroom.
+API_TIMEOUT = 60
+ANSWER_TIMEOUT = 180
+
 mcp = FastMCP("living-atlas-kb", host="127.0.0.1", port=3000)
+
+_client: httpx.AsyncClient | None = None
+
+
+def get_client() -> httpx.AsyncClient:
+    """Return the shared HTTP client, creating it on first use.
+
+    Handlers used to build a fresh AsyncClient per call and never close it,
+    leaking a connection pool on every tool invocation.
+    """
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient()
+    return _client
+
+
+def api_error(exc: Exception) -> str:
+    """Render a failed REST call as a message that says what actually happened.
+
+    httpx timeout exceptions stringify to the empty string, so an unhandled one
+    reached the MCP client as "Error executing tool <name>: " with nothing after
+    the colon — the symptom that made a wedged API take an hour to diagnose.
+    Always name the exception class.
+    """
+    if isinstance(exc, httpx.TimeoutException):
+        return (
+            f"Error: the KB REST API did not respond in time ({type(exc).__name__}). "
+            "It is likely busy or wedged — check the la-toolkit-kb-api service."
+        )
+    return f"Error contacting the KB REST API: {type(exc).__name__}: {exc}"
 
 
 async def handle_query(arguments: dict, http_client=None) -> str:
     """Query the KB via REST API and return formatted markdown."""
     if http_client is None:
-        http_client = httpx.AsyncClient()
+        http_client = get_client()
 
     question = arguments["question"]
     collection = arguments.get("collection", "la_toolkit_kb")
@@ -22,11 +58,14 @@ async def handle_query(arguments: dict, http_client=None) -> str:
     if content_type:
         payload["content_type"] = content_type
 
-    response = await http_client.post(
-        f"{REST_API_URL}/api/query",
-        json=payload,
-        timeout=30,
-    )
+    try:
+        response = await http_client.post(
+            f"{REST_API_URL}/api/query",
+            json=payload,
+            timeout=API_TIMEOUT,
+        )
+    except httpx.RequestError as e:
+        return api_error(e)
 
     if response.status_code != 200:
         return f"Error querying KB: {response.status_code} — {response.json().get('detail', 'unknown error')}"
@@ -56,7 +95,7 @@ async def handle_query(arguments: dict, http_client=None) -> str:
 async def handle_answer(arguments: dict, http_client=None) -> str:
     """Get a RAG-synthesised, cited answer via REST API; format as markdown."""
     if http_client is None:
-        http_client = httpx.AsyncClient()
+        http_client = get_client()
 
     question = arguments["question"]
     collection = arguments.get("collection", "la_toolkit_kb")
@@ -67,11 +106,14 @@ async def handle_answer(arguments: dict, http_client=None) -> str:
     if content_type:
         payload["content_type"] = content_type
 
-    response = await http_client.post(
-        f"{REST_API_URL}/api/answer",
-        json=payload,
-        timeout=180,
-    )
+    try:
+        response = await http_client.post(
+            f"{REST_API_URL}/api/answer",
+            json=payload,
+            timeout=ANSWER_TIMEOUT,
+        )
+    except httpx.RequestError as e:
+        return api_error(e)
 
     if response.status_code != 200:
         detail = "unknown error"
@@ -92,11 +134,14 @@ async def handle_answer(arguments: dict, http_client=None) -> str:
 async def handle_versions(arguments: dict, http_client=None) -> str:
     """Fetch component version metadata via REST API and format as markdown."""
     if http_client is None:
-        http_client = httpx.AsyncClient()
+        http_client = get_client()
 
     repo = arguments.get("repo")
     path = f"/api/versions/{repo}" if repo else "/api/versions"
-    response = await http_client.get(f"{REST_API_URL}{path}", timeout=10)
+    try:
+        response = await http_client.get(f"{REST_API_URL}{path}", timeout=API_TIMEOUT)
+    except httpx.RequestError as e:
+        return api_error(e)
 
     if response.status_code == 404:
         return f"No version data for '{repo}'."
@@ -122,9 +167,12 @@ async def handle_versions(arguments: dict, http_client=None) -> str:
 async def handle_list_collections(arguments: dict, http_client=None) -> str:
     """List KB collections via REST API."""
     if http_client is None:
-        http_client = httpx.AsyncClient()
+        http_client = get_client()
 
-    response = await http_client.get(f"{REST_API_URL}/api/collections", timeout=10)
+    try:
+        response = await http_client.get(f"{REST_API_URL}/api/collections", timeout=API_TIMEOUT)
+    except httpx.RequestError as e:
+        return api_error(e)
 
     if response.status_code != 200:
         return f"Error: {response.status_code}"

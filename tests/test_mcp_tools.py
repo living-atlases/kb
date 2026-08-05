@@ -110,3 +110,29 @@ async def test_list_collections_tool(mock_httpx_client):
 
     assert "la_toolkit_kb" in result
     assert "3671" in result
+
+
+@pytest.mark.asyncio
+async def test_list_collections_reports_timeout_instead_of_empty_error(mock_httpx_client):
+    """A timeout must name itself.
+
+    httpx timeout exceptions stringify to '', so an unhandled one reached the
+    client as "Error executing tool <name>: " with nothing after the colon.
+    """
+    mock_httpx_client.get.side_effect = httpx.ReadTimeout("")
+
+    from server.mcp_http import handle_list_collections
+    result = await handle_list_collections({}, http_client=mock_httpx_client)
+
+    assert "ReadTimeout" in result
+    assert "la-toolkit-kb-api" in result
+
+
+@pytest.mark.asyncio
+async def test_query_reports_connection_error(mock_httpx_client):
+    mock_httpx_client.post.side_effect = httpx.ConnectError("connection refused")
+
+    from server.mcp_http import handle_query
+    result = await handle_query({"question": "test"}, http_client=mock_httpx_client)
+
+    assert "ConnectError" in result
