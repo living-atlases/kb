@@ -31,6 +31,9 @@
         - ../server/mcp_http.py
         - ../server/mcp_stdio.py
         - ../server/repos.py
+      # Same tag as the service restart below, so `--tags repos` ships server
+      # code and restarts it without rebuilding the Flutter web app.
+      tags: [repos]
 
     - name: Copy repos manifest
       ansible.builtin.copy:
