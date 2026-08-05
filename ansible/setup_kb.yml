@@ -240,7 +240,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
-      tags: [reindex, reindex_releases, reindex_issues]
+      tags: [reindex, reindex_releases, reindex_issues, scripts]
 
     - name: "Phase 7b: Install kb_watcher.py"
       ansible.builtin.copy:
@@ -249,7 +249,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
-      tags: [reindex, reindex_releases, reindex_issues]
+      tags: [reindex, reindex_releases, reindex_issues, scripts]
 
     - name: "Phase 7c: Install kb_releases.py"
       ansible.builtin.copy:
@@ -258,7 +258,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
-      tags: [reindex, reindex_releases]
+      tags: [reindex, reindex_releases, scripts]
 
     - name: "Phase 7d-bis: Install kb_issues.py"
       ansible.builtin.copy:
@@ -267,7 +267,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
-      tags: [reindex, reindex_issues]
+      tags: [reindex, reindex_issues, scripts]
 
     - name: "Phase 7d: Install GitHub token env file (for releases API)"
       ansible.builtin.copy:
@@ -280,7 +280,7 @@
         mode: "0600"
       no_log: true
       when: gh_token | length > 0
-      tags: [reindex, reindex_releases, reindex_issues]
+      tags: [reindex, reindex_releases, reindex_issues, scripts]
 
     # ── Phase 8: Index KB ─────────────────────────────────────────────────────
 
@@ -370,7 +370,12 @@
           # and updated issues/PRs (ALA repos); re-indexes only what changed.
           # GH_TOKEN is sourced from {{ kb_home }}/.gh_token (0600) — not inlined here.
           # Calls the venv python directly (no `source activate`) so it runs under /bin/sh.
-          0 * * * * {{ kb_user }} { [ -f {{ kb_home }}/.gh_token ] && . {{ kb_home }}/.gh_token; {{ kb_home }}/venv/bin/python3 {{ kb_home }}/scripts/kb_watcher.py; } >> {{ kb_home }}/logs/watcher.log 2>&1
+          # flock -n: a cycle can outlast the hour, so skip this firing rather than
+          # stack watchers. kb_watcher.py holds its own lock too (watcher.lock), on a
+          # separate file so a manual run is never blocked by a stale cron lock.
+          0 * * * * {{ kb_user }} { [ -f {{ kb_home }}/.gh_token ] && . {{ kb_home }}/.gh_token; /usr/bin/flock -n {{ kb_home }}/data/watcher.cron.lock {{ kb_home }}/venv/bin/python3 {{ kb_home }}/scripts/kb_watcher.py; } >> {{ kb_home }}/logs/watcher.log 2>&1
+      # Same tag as Phase 7b: the cron line and kb_watcher.py must ship together.
+      tags: [reindex, reindex_releases, reindex_issues, scripts]
 
     # ── Phase 10: Systemd services ────────────────────────────────────────────
 

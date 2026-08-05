@@ -18,14 +18,22 @@ State stored in: {KB_HOME}/data/watcher_state.json
   { "ORG/NAME": {"head_sha": "<sha>", "release_date": "<iso>", "issue_update": "<iso>"}, ... }
 Legacy plain-string SHA values are migrated transparently.
 
+Only one cycle may run at a time: a cycle can outlast its own hourly period, so
+the run holds an exclusive lock and a later cron firing exits immediately rather
+than piling up. A cycle also stops once CYCLE_BUDGET is spent — state is saved
+per repo, so the next run resumes where this one left off.
+
 Cron: 0 * * * * (every hour)
 """
 
+import fcntl
 import json
 import logging
 import os
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -36,6 +44,7 @@ import yaml
 KB_HOME = Path(os.environ.get("KB_HOME", Path(__file__).parent.parent))
 CONFIG_FILE = KB_HOME / "config" / "repos.yml"
 STATE_FILE = KB_HOME / "data" / "watcher_state.json"
+LOCK_FILE = KB_HOME / "data" / "watcher.lock"
 INDEXER = KB_HOME / "scripts" / "kb_indexer.py"
 RELEASER = KB_HOME / "scripts" / "kb_releases.py"
 ISSUER = KB_HOME / "scripts" / "kb_issues.py"
@@ -43,6 +52,14 @@ VENV_PYTHON = KB_HOME / "venv" / "bin" / "python3"
 
 REQUEST_TIMEOUT = 20  # seconds
 GITHUB_API = "https://api.github.com"
+
+INDEXER_TIMEOUT = 900  # seconds; an indexer past this is stuck, not working
+CYCLE_BUDGET = 3000  # seconds (50 min) — leave headroom before the next hour
+
+# Repeatedly failing repos back off exponentially so they stop eating the budget
+# of every cycle. Reset on the first success.
+BACKOFF_BASE = 3600  # seconds
+BACKOFF_MAX = 86400  # seconds (24 h)
 
 # Orgs whose issues/PRs are indexed by default (mirrors kb_indexer.ALA_ORGS).
 ALA_ORGS = {"AtlasOfLivingAustralia", "living-atlases"}
@@ -67,8 +84,16 @@ def load_state() -> dict:
 
 
 def save_state(state: dict) -> None:
+    """Write the state file atomically (temp file + rename).
+
+    A partial write would lose every repo's high-water mark and make the next
+    cycle re-index everything, so the rename — atomic within one filesystem —
+    is what guarantees readers never see a truncated file.
+    """
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    tmp = STATE_FILE.with_suffix(STATE_FILE.suffix + ".tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    os.replace(tmp, STATE_FILE)
 
 
 def entry_for(state: dict, key: str) -> dict:
@@ -79,6 +104,53 @@ def entry_for(state: dict, key: str) -> dict:
     if isinstance(val, dict):
         return val
     return {}
+
+
+# ── Failure backoff ───────────────────────────────────────────────────────────
+
+def in_backoff(entry: dict) -> float:
+    """Return the seconds left to wait before retrying this repo (0 = go ahead)."""
+    fails = entry.get("fail_count", 0)
+    last = entry.get("last_failure")
+    if not fails or not last:
+        return 0.0
+    try:
+        since = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds()
+    except ValueError:
+        return 0.0
+    delay = min(BACKOFF_BASE * (2 ** (fails - 1)), BACKOFF_MAX)
+    return max(0.0, delay - since)
+
+
+def record_failure(entry: dict) -> None:
+    entry["fail_count"] = entry.get("fail_count", 0) + 1
+    entry["last_failure"] = datetime.now(timezone.utc).isoformat()
+
+
+def record_success(entry: dict) -> None:
+    entry.pop("fail_count", None)
+    entry.pop("last_failure", None)
+
+
+# ── Single-instance lock ──────────────────────────────────────────────────────
+
+def acquire_lock():
+    """Take the exclusive watcher lock, or exit 0 if another cycle holds it.
+
+    Returns the open file object, which the caller must keep alive for the whole
+    run — the lock lives with the fd. The kernel releases it when the process
+    dies, so a killed watcher never leaves a stale lock behind.
+    """
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd = open(LOCK_FILE, "w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log.info("Another watch cycle is still running — skipping this one.")
+        sys.exit(0)
+    fd.write(f"{os.getpid()}\n")
+    fd.flush()
+    return fd
 
 
 # ── Manifest helpers ──────────────────────────────────────────────────────────
@@ -268,7 +340,7 @@ def _run_indexer(script: Path, org: str, name: str, label: str) -> bool:
             cwd=str(KB_HOME),
             capture_output=True,
             text=True,
-            timeout=1800,
+            timeout=INDEXER_TIMEOUT,
         )
         if result.returncode != 0:
             log.error("%s/%s: %s failed:\n%s", org, name, label, result.stderr[-2000:])
@@ -305,21 +377,47 @@ def main() -> None:
         log.error("Config not found: %s", CONFIG_FILE)
         sys.exit(1)
 
+    lock = acquire_lock()  # noqa: F841 — held for the lifetime of the run
+
     with open(CONFIG_FILE) as f:
         manifest = yaml.safe_load(f)
 
     repos = expand_repos(manifest)
     state = load_state()
     headers = github_headers()
+    started = time.monotonic()
     updated = 0
     errors = 0
     unchanged = 0
+    skipped = 0
 
-    for repo in repos:
+    for i, repo in enumerate(repos):
+        elapsed = time.monotonic() - started
+        if elapsed > CYCLE_BUDGET:
+            log.warning(
+                "Cycle budget spent after %.0f min — %d repos not visited; "
+                "the next cycle resumes from here.",
+                elapsed / 60,
+                len(repos) - i,
+            )
+            break
+
         org, name, branch = repo["org"], repo["name"], repo["branch"]
         key = f"{org}/{name}"
         entry = entry_for(state, key)
         changed = False
+        failed = False
+
+        wait = in_backoff(entry)
+        if wait:
+            log.info(
+                "%s: backing off after %d failures — retrying in %.0f min",
+                key,
+                entry.get("fail_count", 0),
+                wait / 60,
+            )
+            skipped += 1
+            continue
 
         # ── Local (non-git) source → fingerprint poll ──
         if repo.get("is_local"):
@@ -333,11 +431,13 @@ def main() -> None:
                 log.info("%s: local source changed — re-indexing", key)
                 if reindex_repo(org, name):
                     entry["fingerprint"] = fp
-                    state[key] = entry
-                    save_state(state)
+                    record_success(entry)
                     updated += 1
                 else:
+                    record_failure(entry)
                     errors += 1
+                state[key] = entry
+                save_state(state)
             continue
 
         # ── Commit poll → re-index file content ──
@@ -352,6 +452,7 @@ def main() -> None:
                 entry["head_sha"] = sha
                 changed = True
             else:
+                failed = True
                 errors += 1
 
         # ── Release poll → re-index release notes (only opted-in repos) ──
@@ -363,6 +464,7 @@ def main() -> None:
                     entry["release_date"] = rel_date
                     changed = True
                 else:
+                    failed = True
                     errors += 1
 
         # ── Issue poll → re-index issues/PRs (only opted-in repos) ──
@@ -376,20 +478,32 @@ def main() -> None:
                     entry["issue_update"] = issue_update
                     changed = True
                 else:
+                    failed = True
                     errors += 1
 
-        if changed:
+        # Persist on failure too: without a recorded failure the repo would be
+        # retried in full every hour, which is what let a broken repo starve the
+        # whole cycle.
+        if failed:
+            record_failure(entry)
+        elif changed:
+            record_success(entry)
+
+        if changed or failed:
             state[key] = entry
             save_state(state)
+
+        if changed:
             updated += 1
-        else:
+        elif not failed:
             unchanged += 1
 
     log.info(
-        "Watch cycle complete. Updated: %d, Errors: %d, Unchanged: %d",
+        "Watch cycle complete. Updated: %d, Errors: %d, Unchanged: %d, Backed off: %d",
         updated,
         errors,
         unchanged,
+        skipped,
     )
 
 
