@@ -300,7 +300,16 @@ included Ansible playbooks.
 `kb_watcher.py` runs hourly (cron, installed by the playbook). It polls each repo with
 `git ls-remote` (re-indexing file content when the default branch has new commits) **and**
 the GitHub Releases API (re-indexing release notes + refreshing `versions.json` when a new
-release is published). To force a re-index of a single repo:
+release is published).
+
+A cycle can take longer than an hour, so only one runs at a time: the cron line uses
+`flock -n` and the script holds its own `data/watcher.lock`. A later firing exits
+immediately with `Another watch cycle is still running`. Each cycle also stops after
+`CYCLE_BUDGET` (50 min) and resumes from where it left off, since state is saved per
+repo. A repo whose indexing keeps failing backs off exponentially (1 h, 2 h, … capped at
+24 h) instead of being retried in full every hour.
+
+To force a re-index of a single repo:
 
 ```bash
 ansible-playbook -i inventory.ini ansible/setup_kb.yml \

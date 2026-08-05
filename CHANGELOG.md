@@ -29,6 +29,43 @@ All notable changes to this project are documented here. The format is based on
 - `la-toolkit-backend` added to the indexed repository manifest. Per-repo
   `releases: false` opts a repo out of release indexing.
 
+### Fixed
+- Watcher cycles no longer pile up. A cycle can outlast its hourly period, and
+  with no concurrency guard the hourly cron stacked watchers indefinitely — 69
+  live watchers spawning 26 concurrent indexers exhausted host memory and wedged
+  the API behind ChromaDB lock contention, so every MCP tool returned an empty
+  error. `kb_watcher.py` now takes an exclusive `data/watcher.lock` and the cron
+  line wraps the run in `flock -n`; a later firing exits 0 immediately.
+- `save_state()` writes atomically (temp file + `os.replace`). Concurrent
+  watchers were truncating `watcher_state.json`, losing every high-water mark
+  and making each cycle re-index all 65 repos from scratch.
+- A cycle now stops after `CYCLE_BUDGET` (50 min) and resumes next run, and the
+  per-indexer timeout drops from 30 to 15 min.
+- Repos whose indexing fails now record the failure and back off exponentially
+  (1 h → 24 h) instead of being retried in full every hour.
+- REST API: ChromaDB access is serialized behind a lock with a bounded wait, and
+  callers that cannot be served get a 503 instead of occupying a threadpool
+  worker indefinitely. A single stalled Chroma call used to consume every worker
+  and take the whole process down with it.
+- REST API: `/health` is async, so it reports liveness even when Chroma is
+  blocked. As a sync endpoint it ran in the same exhausted threadpool and timed
+  out, making a reachable service look dead.
+- REST API: `/api/answer` and the `/api/chat` SSE generator ran blocking Chroma
+  calls directly on the event loop; they now run in a worker thread.
+- MCP: httpx failures are caught and reported by name. A timeout stringifies to
+  `""`, so an unhandled one reached clients as `Error executing tool <name>: `
+  with nothing after the colon. Short 10s timeouts on the plain lookups were
+  raised to 60s, and the per-call `AsyncClient` (leaked on every invocation) is
+  now a shared instance.
+
+### Operational note
+Killing indexers mid-write can leave records in ChromaDB's `embeddings_queue`
+that were never applied to the HNSW segment. ChromaDB 0.6.3 deadlocks applying
+that backlog on the next query — every thread parked in `futex_wait`, no
+progress, forever. The index itself stays readable (`hnswlib` loads and queries
+it in under a second), so recovery is to mark the vector segment caught up in
+`max_seq_id`; the skipped chunks come back on the next re-index of their repos.
+
 ## [1.0.0] - 2026-06-16
 
 First public release.
