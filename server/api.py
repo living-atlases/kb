@@ -4,7 +4,9 @@ import os
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-from contextlib import asynccontextmanager
+import asyncio
+import threading
+from contextlib import asynccontextmanager, contextmanager
 from typing import Optional
 
 import chromadb
@@ -27,6 +29,43 @@ VERSIONS_FILE = os.environ.get("KB_VERSIONS_FILE", "/opt/la-toolkit-kb/data/vers
 
 chroma_client: Optional[chromadb.PersistentClient] = None  # set on startup
 embed_model: Optional[SentenceTransformer] = None
+
+# ChromaDB serialises internally anyway, and a slow operation (an HNSW index
+# load, a WAL replay) can take minutes. Letting requests queue on it inside the
+# threadpool exhausted every worker and wedged the whole process — including
+# endpoints that never touch Chroma. One lock, with a bounded wait, turns that
+# into a fast 503 for the callers that cannot be served right now.
+_chroma_lock = threading.Lock()
+CHROMA_LOCK_TIMEOUT = 30  # seconds
+
+
+@contextmanager
+def chroma_access():
+    """Hold the ChromaDB lock, or raise 503 if it cannot be had in time."""
+    if not _chroma_lock.acquire(timeout=CHROMA_LOCK_TIMEOUT):
+        raise HTTPException(
+            status_code=503,
+            detail="Knowledge base is busy (a ChromaDB operation is in progress). Retry shortly.",
+        )
+    try:
+        yield
+    finally:
+        _chroma_lock.release()
+
+
+def run_query(collection: str, **query_kwargs) -> dict:
+    """Look up a collection and query it, serialized behind the ChromaDB lock."""
+    with chroma_access():
+        try:
+            col = chroma_client.get_collection(collection)
+        except Exception:
+            raise HTTPException(status_code=404, detail=f"Collection '{collection}' not found")
+        return col.query(**query_kwargs)
+
+
+async def run_query_async(collection: str, **query_kwargs) -> dict:
+    """`run_query` off the event loop — Chroma calls are blocking and can be slow."""
+    return await asyncio.to_thread(run_query, collection, **query_kwargs)
 
 
 @asynccontextmanager
@@ -211,17 +250,18 @@ def home():
 
 
 @app.get("/health")
-def health():
+async def health():
+    """Liveness only — deliberately async so it is served on the event loop.
+
+    As a sync endpoint this ran in the threadpool, so a Chroma stall that
+    consumed every worker made even the health check time out and the service
+    looked dead from the outside. Use /api/collections to check Chroma itself.
+    """
     return {"status": "ok"}
 
 
 @app.post("/api/query", response_model=QueryResponse)
 def query(req: QueryRequest):
-    try:
-        col = chroma_client.get_collection(req.collection)
-    except Exception:
-        raise HTTPException(status_code=404, detail=f"Collection '{req.collection}' not found")
-
     query_kwargs = dict(
         query_embeddings=embed_model.encode([req.question]).tolist(),
         n_results=req.n_results,
@@ -230,7 +270,7 @@ def query(req: QueryRequest):
     if req.content_type:
         query_kwargs["where"] = {"content_type": req.content_type}
 
-    results = col.query(**query_kwargs)
+    results = run_query(req.collection, **query_kwargs)
 
     items = []
     for doc, meta, dist in zip(
@@ -249,15 +289,16 @@ def query(req: QueryRequest):
 
 @app.get("/api/collections", response_model=CollectionsResponse)
 def list_collections():
-    stubs = chroma_client.list_collections()
-    result = []
-    for stub in stubs:
-        name = stub if isinstance(stub, str) else stub.name
-        try:
-            count = chroma_client.get_collection(name).count()
-        except Exception:
-            count = 0
-        result.append(CollectionInfo(name=name, count=count))
+    with chroma_access():
+        stubs = chroma_client.list_collections()
+        result = []
+        for stub in stubs:
+            name = stub if isinstance(stub, str) else stub.name
+            try:
+                count = chroma_client.get_collection(name).count()
+            except Exception:
+                count = 0
+            result.append(CollectionInfo(name=name, count=count))
     return CollectionsResponse(collections=result)
 
 
@@ -305,16 +346,16 @@ def list_repos():
 async def _chat_sse_generator(req: ChatRequest):
     """Fetch context from ChromaDB, stream Ollama response as SSE."""
     try:
-        col = chroma_client.get_collection(req.collection)
-    except Exception:
-        yield f"data: {{\"error\": \"Collection '{req.collection}' not found\"}}\n\n"
+        results = await run_query_async(
+            req.collection,
+            query_embeddings=embed_model.encode([req.question]).tolist(),
+            n_results=req.n_results,
+            include=["documents"],
+        )
+    except HTTPException as exc:
+        yield f'data: {{"error": "{exc.detail}"}}\n\n'
         return
 
-    results = col.query(
-        query_embeddings=embed_model.encode([req.question]).tolist(),
-        n_results=req.n_results,
-        include=["documents"],
-    )
     context_chunks = results["documents"][0] if results["documents"] else []
     history = [{"role": m.role, "content": m.content} for m in req.history]
     messages = build_messages(context_chunks, req.question, history=history)
@@ -350,11 +391,6 @@ async def answer(req: AnswerRequest):
     structured `sources` list so non-Claude clients (e.g. a Slack bot) get a
     ready-to-post, attributable response.
     """
-    try:
-        col = chroma_client.get_collection(req.collection)
-    except Exception:
-        raise HTTPException(status_code=404, detail=f"Collection '{req.collection}' not found")
-
     query_kwargs = dict(
         query_embeddings=embed_model.encode([req.question]).tolist(),
         n_results=req.n_results,
@@ -363,7 +399,7 @@ async def answer(req: AnswerRequest):
     if req.content_type:
         query_kwargs["where"] = {"content_type": req.content_type}
 
-    results = col.query(**query_kwargs)
+    results = await run_query_async(req.collection, **query_kwargs)
 
     hits = []
     for doc, meta, dist in zip(

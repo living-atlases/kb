@@ -199,3 +199,36 @@ def test_versions_endpoint_empty_when_no_file(test_client, tmp_path):
         assert resp.json() == {}
     finally:
         api_module.VERSIONS_FILE = original
+
+
+def test_query_returns_503_when_chroma_lock_is_held(test_client, monkeypatch):
+    """A stalled ChromaDB operation must fail fast, not consume a worker forever.
+
+    Threads queueing on Chroma is what exhausted the threadpool and wedged the
+    whole process, health check included.
+    """
+    import server.api as api_module
+
+    monkeypatch.setattr(api_module, "CHROMA_LOCK_TIMEOUT", 0.1)
+    api_module._chroma_lock.acquire()
+    try:
+        response = test_client.post("/api/query", json={"question": "test"})
+    finally:
+        api_module._chroma_lock.release()
+
+    assert response.status_code == 503
+    assert "busy" in response.json()["detail"].lower()
+
+
+def test_health_does_not_touch_chroma(test_client):
+    """/health must answer even while Chroma is blocked — it reports liveness only."""
+    import server.api as api_module
+
+    api_module._chroma_lock.acquire()
+    try:
+        response = test_client.get("/health")
+    finally:
+        api_module._chroma_lock.release()
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
