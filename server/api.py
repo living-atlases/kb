@@ -76,7 +76,15 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Living Atlas KB API", lifespan=lifespan)
+# nginx only proxies /api/ to this backend (path preserved), so the docs must
+# live under that prefix or https://kb.l-a.site/api/docs 404s.
+app = FastAPI(
+    title="Living Atlas KB API",
+    lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+)
 
 
 class QueryRequest(BaseModel):
