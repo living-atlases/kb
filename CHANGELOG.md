@@ -30,6 +30,7 @@ All notable changes to this project are documented here. The format is based on
   `releases: false` opts a repo out of release indexing.
 
 ### Fixed
+- CI is green again. The `mcp` dependency was declared as `mcp>=1.27` with no upper bound, so fresh installs resolved to mcp 2.x, where `mcp.server.fastmcp` no longer exists; the MCP tool tests failed on import (7 failures since 2026-08-05) and a new host provisioned from scratch would have installed a server SDK the code cannot import. Pinned to `mcp>=1.27,<2` in `server/requirements.txt` and in both playbooks.
 - Swagger/OpenAPI docs are reachable again. `FastAPI()` was instantiated with the default `docs_url="/docs"`, but nginx only proxies `/api/` to the backend (path preserved), so the `https://kb.l-a.site/api/docs` URL advertised in the README returned 404. The app now mounts `docs_url="/api/docs"`, `redoc_url="/api/redoc"` and `openapi_url="/api/openapi.json"`.
 - Watcher cycles no longer pile up. A cycle can outlast its hourly period, and
   with no concurrency guard the hourly cron stacked watchers indefinitely — 69
