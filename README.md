@@ -224,6 +224,7 @@ not a per-tier update cadence.
 | [fieldcapture](https://github.com/AtlasOfLivingAustralia/fieldcapture) | AtlasOfLivingAustralia | Field data capture application |
 | [biocollect](https://github.com/AtlasOfLivingAustralia/biocollect) | AtlasOfLivingAustralia | Biological data collection application |
 | [commonui-bs5-2024](https://github.com/AtlasOfLivingAustralia/commonui-bs5-2024) | AtlasOfLivingAustralia | Bootstrap 5 common UI components for LA portals |
+| [quail](https://github.com/AtlasOfLivingAustralia/quail) | AtlasOfLivingAustralia | QGIS plugin to query Living Atlas occurrence data |
 | [base-branding](https://github.com/living-atlases/base-branding) | living-atlases | LA base branding and theming |
 | [la-docker-compose](https://github.com/living-atlases/la-docker-compose) | living-atlases | Docker Compose stack for Living Atlas portals |
 | [la-docker-images](https://github.com/living-atlases/la-docker-images) | living-atlases | Build repo for Living Atlas Docker images |

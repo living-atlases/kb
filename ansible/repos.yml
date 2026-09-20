@@ -66,6 +66,8 @@ orgs:
         description: "ALA documentation hub (wiki holds 144+ pages)"
       - name: pipelines
         description: "ALA fork of GBIF pipelines (la-pipelines / livingatlas)"
+      - name: quail
+        description: "QGIS plugin to query Living Atlas occurrence data"
 
   living-atlases:
     base_url: https://github.com/living-atlases
@@ -163,6 +165,11 @@ blocklist:
   - "*-min.js"            # alt minified naming (foo-min.js)
   - "*.map"
   - "package-lock.json"   # generated npm lockfile (large, no doc value)
+  # Qt resource compiler output (QGIS plugins, e.g. quail): a single generated
+  # file of base64 blobs. quail/resources.py alone is 915 KB (~460 chunks) in a
+  # 1.4 MB source tree. The header says "All changes made in this file will be
+  # lost!" — there is nothing to retrieve from it.
+  - "resources.py"
   - "*-usages.json"       # checklistbank nub test fixtures
   # ── Binaries / archives ──
   - "*.jar"

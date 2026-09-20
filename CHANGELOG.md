@@ -7,6 +7,16 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Index `AtlasOfLivingAustralia/quail`, the QGIS plugin for querying Living
+  Atlas occurrence data. Blocklist `resources.py`: the Qt resource compiler
+  writes a single 915 KB file of base64 blobs there (~460 chunks in a 1.4 MB
+  source tree) whose own header says changes to it are lost. With it excluded
+  the repo contributes 28 files / 159 KB of real source and Sphinx docs.
+- `tests/test_manifest.py`: pins the `repos.yml` contract — org/base_url shape,
+  no duplicate entries, tier1 keys resolve, wiki companions, issue-indexing
+  defaults per org — and the `is_blocked` semantics (directory-component vs
+  filename patterns), so a blocklist pattern that silently swallows source is
+  caught in CI.
 - GitHub Issues & PRs ingestion (`kb_issues.py`): issues and pull requests are
   chunked into the KB with `content_type="issue"`/`"pr"` metadata — bug
   workarounds, design discussions and Q&A that never reach the docs. Indexed for
