@@ -48,6 +48,7 @@ LOCK_FILE = KB_HOME / "data" / "watcher.lock"
 INDEXER = KB_HOME / "scripts" / "kb_indexer.py"
 RELEASER = KB_HOME / "scripts" / "kb_releases.py"
 ISSUER = KB_HOME / "scripts" / "kb_issues.py"
+SCANNER = KB_HOME / "scripts" / "kb_coverage.py"
 VENV_PYTHON = KB_HOME / "venv" / "bin" / "python3"
 
 REQUEST_TIMEOUT = 20  # seconds
@@ -370,6 +371,11 @@ def reindex_issues(org: str, name: str) -> bool:
     return _run_indexer(ISSUER, org, name, "Re-indexing issues")
 
 
+def rescan_tests(org: str, name: str) -> bool:
+    """Refresh the repo's testing.json entry (new commits may add/remove tests)."""
+    return _run_indexer(SCANNER, org, name, "Scanning tests")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -451,6 +457,10 @@ def main() -> None:
             if reindex_repo(org, name):
                 entry["head_sha"] = sha
                 changed = True
+                # Same pull, no network, no embeddings: keep testing.json in
+                # step with the code it describes. A failure here is not worth
+                # failing the repo over — the counts just stay one cycle stale.
+                rescan_tests(org, name)
             else:
                 failed = True
                 errors += 1

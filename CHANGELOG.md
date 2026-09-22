@@ -7,6 +7,27 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Test inventory (`kb_coverage.py`, `GET /api/testing`, MCP tool
+  `get_ala_test_coverage`). "How well tested is component X?" was unanswerable
+  from the semantic index: the blocklist drops `test/`, `tests/` and
+  `integration-test/`, so no test file is embedded, and the query API exposes no
+  per-repo filter. The other half of the KB does have the answer — the
+  persistent clones under `{kb_home}/repos`, refreshed hourly by the watcher.
+  `kb_coverage.py` walks them and writes `data/testing.json`: per component, the
+  number of declared test cases split into unit / integration / e2e, production
+  LOC, detected stack, and which coverage tooling the build configures. No
+  embedding, no network — a filesystem walk, so the watcher runs it on the same
+  pull that triggers a re-index.
+
+  Counting is per framework, not per annotation: `@Test` alone would report zero
+  tests for every Grails app in the stack, where Spock feature methods are
+  quoted strings. Classification is by content where the path lies — Grails
+  keeps its Geb browser specs under `src/integration-test`, so those are
+  reclassified as e2e rather than integration.
+
+  It is not measured line coverage, which would need a full build per repo.
+  Each entry carries a `test_level` (`good`/`moderate`/`low`/`minimal`/`none`)
+  and a one-sentence `assessment` so the output is usable without reading code.
 - Index `AtlasOfLivingAustralia/quail`, the QGIS plugin for querying Living
   Atlas occurrence data. Blocklist `resources.py`: the Qt resource compiler
   writes a single 915 KB file of base64 blobs there (~460 chunks in a 1.4 MB

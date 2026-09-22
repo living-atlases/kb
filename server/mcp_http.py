@@ -164,6 +164,59 @@ async def handle_versions(arguments: dict, http_client=None) -> str:
     return "\n".join(lines)
 
 
+async def handle_testing(arguments: dict, http_client=None) -> str:
+    """Fetch the test inventory via REST API and format as a markdown table."""
+    if http_client is None:
+        http_client = get_client()
+
+    repo = arguments.get("repo")
+    org = arguments.get("org")
+    path = f"/api/testing/{repo}" if repo else "/api/testing"
+    try:
+        response = await http_client.get(f"{REST_API_URL}{path}", timeout=API_TIMEOUT)
+    except httpx.RequestError as e:
+        return api_error(e)
+
+    if response.status_code == 404:
+        return f"No test data for '{repo}'."
+    if response.status_code != 200:
+        return f"Error: {response.status_code}"
+
+    data = response.json()
+    if repo:
+        data = {repo: data}
+    if org:
+        data = {k: v for k, v in data.items() if k.split("/")[0] == org}
+    data = {k: v for k, v in data.items() if v.get("status") != "not_cloned"}
+    if not data:
+        return "No test data available yet."
+
+    lines = [
+        "# Living Atlas / GBIF test inventory\n",
+        "`level` rates test cases against the size of the code they cover "
+        "(good / moderate / low / minimal / none). `e2e` means tests that drive "
+        "a real browser. `coverage measured` means the build computes a coverage "
+        "figure at all — this is NOT a measured coverage percentage, which would "
+        "need a full build per repo.\n",
+        "| Component | Level | e2e | Coverage measured | unit | integration | e2e cases | total | prod kLOC |",
+        "|---|---|---|---|--:|--:|--:|--:|--:|",
+    ]
+    for key in sorted(data, key=lambda k: -data[k].get("total_cases", 0)):
+        v = data[key]
+        tools = ", ".join(v.get("coverage_tools") or [])
+        lines.append(
+            f"| {key} | **{v.get('test_level', '?')}** "
+            f"| {'yes' if v.get('has_e2e') else 'no'} | {tools or 'no'} "
+            f"| {v['unit']['cases']} | {v['integration']['cases']} | {v['e2e']['cases']} "
+            f"| **{v.get('total_cases', 0)}** | {v.get('main_loc', 0) // 1000} |"
+        )
+    if repo:
+        v = data[repo]
+        if v.get("assessment"):
+            lines.append(f"\n**{repo}**: {v['assessment']}")
+    return "\n".join(lines)
+
+
 async def handle_list_collections(arguments: dict, http_client=None) -> str:
     """List KB collections via REST API."""
     if http_client is None:
@@ -252,3 +305,20 @@ async def get_ala_component_versions(repo: str | None = None) -> str:
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http")
+
+
+@mcp.tool()
+async def get_ala_test_coverage(repo: str | None = None, org: str | None = None) -> str:
+    """Test inventory of ALA / GBIF components: unit, integration and e2e case counts.
+
+    Answers "how well tested is component X?" and "how does ALA compare with
+    GBIF?". Counts declared test cases per framework (JUnit, Spock, pytest,
+    Playwright, Geb, Cucumber), splits them by type, and reports which coverage
+    tooling each build configures (jacoco, sonar, codecov, coveralls).
+
+    This is NOT measured line coverage — that would need a full build per repo.
+
+    Pass repo as 'ORG/NAME' for one component, org as e.g. 'gbif' to compare a
+    whole organisation, or neither for everything.
+    """
+    return await handle_testing({"repo": repo, "org": org})

@@ -123,7 +123,9 @@ Once connected, the KB exposes:
 |---|---|
 | `query_ala_kb` | Semantic search over all indexed repos. Optional `content_type` to restrict to `source` (repo files), `release` (release notes / changelogs), `issue`/`pr` (GitHub issues & pull requests), `wiki`, or `faq` |
 | `list_ala_kb_collections` | List available collections with doc counts |
+| `answer_ala_kb` | RAG synthesis: an LLM-composed, cited answer instead of raw chunks |
 | `get_ala_component_versions` | Latest release/version per component (from GitHub Releases) — for keeping deployment dependency lists up to date |
+| `get_ala_test_coverage` | Test inventory per component: unit / integration / e2e case counts, a plain-language level, and which coverage tooling the build configures |
 
 ---
 
@@ -159,6 +161,29 @@ into `data/versions.json` and served for keeping deployment dependency lists
 curl https://kb.l-a.site/api/versions                                  # all components
 curl https://kb.l-a.site/api/versions/AtlasOfLivingAustralia/collectory  # one component
 ```
+
+### Test inventory
+
+`kb_coverage.py` walks the repo clones the indexer already maintains and
+aggregates, per component, how many test cases are declared (counted per
+framework: JUnit, Spock, pytest, Playwright, Geb, Cucumber), split into unit,
+integration and end-to-end, plus which coverage tooling the build configures.
+The result lands in `data/testing.json`.
+
+It is **not** measured line coverage — that needs a full build per repo (JDK,
+Grails, Maven/Gradle toolchains, hours). It answers the question people usually
+mean: *is this component tested at all, does anything exercise it through a
+browser, and does anyone measure its coverage?* Each entry carries a
+`test_level` of `good` / `moderate` / `low` / `minimal` / `none` (test cases
+weighted by the size of the code they cover) and a one-sentence `assessment`.
+
+```bash
+curl https://kb.l-a.site/api/testing                                  # all components
+curl https://kb.l-a.site/api/testing/AtlasOfLivingAustralia/collectory  # one component
+```
+
+The watcher rescans a repo whenever it sees new commits, so the figures track
+the code. A full rescan is `ansible-playbook ansible/setup_kb.yml --tags reindex_coverage`.
 
 ### AI chat (RAG + streaming)
 

@@ -5,8 +5,10 @@ import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 import asyncio
+import json
 import threading
 from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
 from typing import Optional
 
 import chromadb
@@ -26,6 +28,12 @@ except ImportError:
 CHROMA_PATH = os.environ.get("CHROMA_PATH", "/opt/la-toolkit-kb/data/chromadb/")
 EMBED_MODEL = "all-MiniLM-L6-v2"
 VERSIONS_FILE = os.environ.get("KB_VERSIONS_FILE", "/opt/la-toolkit-kb/data/versions.json")
+TESTING_FILE = os.environ.get("KB_TESTING_FILE", "/opt/la-toolkit-kb/data/testing.json")
+
+# testing.json is bigger than versions.json and read far less often than it is
+# written, so cache it with mtime invalidation instead of re-parsing per request
+# (same approach as repos.py).
+_testing_cache: dict = {"mtime": 0.0, "data": None}
 
 chroma_client: Optional[chromadb.PersistentClient] = None  # set on startup
 embed_model: Optional[SentenceTransformer] = None
@@ -214,6 +222,8 @@ def home():
   <div class="endpoint"><span class="badge get">GET</span> <code>/api/collections</code> — List available collections and document counts</div>
   <div class="endpoint"><span class="badge post">POST</span> <code>/api/query</code> — Semantic search query (raw chunks)</div>
   <div class="endpoint"><span class="badge post">POST</span> <code>/api/answer</code> — RAG synthesis: a cited answer with a structured source list</div>
+  <div class="endpoint"><span class="badge get">GET</span> <code>/api/versions</code> — Latest release per component</div>
+  <div class="endpoint"><span class="badge get">GET</span> <code>/api/testing</code> — Test inventory per component (unit / integration / e2e)</div>
 
   <h3>Example query</h3>
   <pre>curl -X POST https://kb.l-a.site/api/query \\
@@ -249,6 +259,8 @@ def home():
     <li><code>query_ala_kb</code> — Semantic search over the Living Atlas knowledge base (raw chunks)</li>
     <li><code>answer_ala_kb</code> — RAG synthesis: a cited answer composed from the knowledge base</li>
     <li><code>list_ala_kb_collections</code> — List available document collections</li>
+    <li><code>get_ala_component_versions</code> — Latest release/version per component</li>
+    <li><code>get_ala_test_coverage</code> — Test inventory per component: unit, integration and e2e case counts</li>
   </ul>
 
   <h2>Interactive API docs</h2>
@@ -338,6 +350,44 @@ def get_version(org: str, name: str):
     if key not in versions:
         raise HTTPException(status_code=404, detail=f"No version data for '{key}'")
     return versions[key]
+
+
+@app.get("/api/testing")
+def list_testing():
+    """Return the test inventory for every cloned component.
+
+    Sourced from data/testing.json (written by kb_coverage.py, refreshed by the
+    watcher when a repo gets new commits). Maps "org/name" -> counts of unit /
+    integration / e2e test cases, production LOC, detected stack and which
+    coverage tooling the build configures.
+
+    This is not line coverage: measuring that needs a full build per repo. It
+    answers "is this component tested, and is its coverage measured at all?".
+    """
+    path = Path(TESTING_FILE)
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        return {}
+    if _testing_cache["data"] is not None and _testing_cache["mtime"] == mtime:
+        return _testing_cache["data"]
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        raise HTTPException(status_code=500, detail="testing.json unreadable")
+    _testing_cache["mtime"] = mtime
+    _testing_cache["data"] = data
+    return data
+
+
+@app.get("/api/testing/{org}/{name}")
+def get_testing(org: str, name: str):
+    """Return the test inventory for a single component."""
+    testing = list_testing()
+    key = f"{org}/{name}"
+    if key not in testing:
+        raise HTTPException(status_code=404, detail=f"No test data for '{key}'")
+    return testing[key]
 
 
 @app.get("/api/repos")
