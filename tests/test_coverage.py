@@ -324,9 +324,11 @@ def test_a_small_but_genuinely_tested_service_still_scores():
 def test_assessment_is_readable_without_reading_code(fake_repo):
     entry = kc.scan_repo(fake_repo)
     assert entry["test_level"] in ("none", "minimal", "low", "moderate", "good", "unscored")
-    assert entry["has_e2e"] is True
+    # One browser test in the fixture: real, but not a suite.
+    assert entry["e2e_status"] == "token"
+    assert entry["has_e2e"] is False
     assert entry["coverage_measured"] is True
-    assert "end-to-end" in entry["assessment"]
+    assert "browser test" in entry["assessment"]
     assert "jacoco" in entry["assessment"]
     assert entry["assessment"].endswith(".")
 
@@ -348,13 +350,13 @@ REPORT_DATA = {
     "gbif/pipelines": {
         "status": "ok", "test_level": "good", "total_cases": 1126,
         "unit": {"cases": 988, "files": 218}, "integration": {"cases": 138, "files": 36},
-        "e2e": {"cases": 0, "files": 0}, "main_loc": 97035,
+        "e2e": {"cases": 0, "files": 0}, "e2e_status": "none", "main_loc": 97035,
         "coverage_tools": ["sonar"], "cases_per_kloc": 11.6,
     },
     "AtlasOfLivingAustralia/collectory": {
         "status": "ok", "test_level": "minimal", "total_cases": 116,
         "unit": {"cases": 116, "files": 7}, "integration": {"cases": 0, "files": 0},
-        "e2e": {"cases": 0, "files": 1}, "main_loc": 58427,
+        "e2e": {"cases": 0, "files": 1}, "e2e_status": "scaffold", "main_loc": 58427,
         "coverage_tools": [], "cases_per_kloc": 1.99,
     },
     "AtlasOfLivingAustralia/ala-bie": {"status": "not_cloned"},
@@ -390,3 +392,35 @@ def test_report_reads_the_local_artifact_when_no_api_given(tmp_path, monkeypatch
     monkeypatch.setattr(kc, "TESTING_FILE", target)
     kc.write_testing(REPORT_DATA)
     assert kc.load_report_data(None) == REPORT_DATA
+
+
+# ── e2e is a suite, not a single test ─────────────────────────────────────────
+
+@pytest.mark.parametrize("cases,files,expected", [
+    (771, 100, "yes"),
+    (28, 20, "yes"),
+    (13, 4, "yes"),
+    (3, 1, "yes"),
+    (1, 2, "token"),
+    (2, 2, "token"),
+    (0, 1, "scaffold"),
+    (0, 0, "none"),
+])
+def test_e2e_status(cases, files, expected):
+    assert kc.e2e_status(cases, files) == expected
+
+
+def test_single_browser_test_does_not_claim_an_e2e_suite():
+    """spatial-service has exactly one, and is the worst component in the set:
+    'has end-to-end tests' there reads as the opposite of the truth."""
+    entry = {"test_level": "minimal", "e2e_status": kc.e2e_status(1, 2),
+             "coverage_measured": False, "coverage_tools": []}
+    text = kc.assess(entry)
+    assert "token browser test" in text
+    assert "has end-to-end tests" not in text
+
+
+def test_empty_scaffold_is_named_as_such():
+    entry = {"test_level": "low", "e2e_status": kc.e2e_status(0, 1),
+             "coverage_measured": False, "coverage_tools": []}
+    assert "never filled in" in kc.assess(entry)

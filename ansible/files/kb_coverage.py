@@ -144,6 +144,11 @@ LEVEL_BANDS = [
 # that is the most important finding in the set, not a rounding error.
 MIN_LOC_TO_RATE = 2000
 
+# A single browser test is not an e2e suite. spatial-service has exactly one,
+# and "has end-to-end tests" next to the worst-tested component in the manifest
+# reads as the opposite of the truth.
+MIN_E2E_CASES = 3
+
 LEVEL_TEXT = {
     "good": "well covered by automated tests",
     "moderate": "reasonably tested",
@@ -165,13 +170,26 @@ def rate(cases_per_kloc: float, total_cases: int, main_loc: int = 0) -> str:
     return "minimal"
 
 
+E2E_TEXT = {
+    "none": "no end-to-end tests",
+    "scaffold": "an end-to-end scaffold that was never filled in",
+    "token": "a token browser test, not an end-to-end suite",
+    "yes": "has end-to-end tests that drive a real browser",
+}
+
+
+def e2e_status(cases: int, files: int) -> str:
+    if cases >= MIN_E2E_CASES:
+        return "yes"
+    if cases > 0:
+        return "token"
+    return "scaffold" if files else "none"
+
+
 def assess(entry: dict) -> str:
     """One sentence a non-developer can act on."""
     parts = [LEVEL_TEXT[entry["test_level"]]]
-    if entry["has_e2e"]:
-        parts.append("has end-to-end tests that drive a real browser")
-    else:
-        parts.append("no end-to-end tests")
+    parts.append(E2E_TEXT[entry["e2e_status"]])
     parts.append(
         "coverage is measured in the build (%s)" % ", ".join(entry["coverage_tools"])
         if entry["coverage_measured"]
@@ -311,7 +329,8 @@ def scan_repo(repo_dir: Path) -> dict:
 
     # Derived, plain-language fields: the point of the whole artifact is that
     # someone who does not read Java can tell which components are exposed.
-    res["has_e2e"] = res["e2e"]["cases"] > 0
+    res["e2e_status"] = e2e_status(res["e2e"]["cases"], res["e2e"]["files"])
+    res["has_e2e"] = res["e2e_status"] == "yes"
     res["coverage_measured"] = bool(res["coverage_tools"])
     res["test_level"] = rate(res["cases_per_kloc"], res["total_cases"], res["main_loc"])
     res["assessment"] = assess(res)
@@ -442,12 +461,13 @@ def render_report(data: dict, org: str | None = None) -> str:
                                    -scoped[k]["total_cases"])
         ):
             v = scoped[key]
-            if v["e2e"]["cases"]:
-                e2e = f"yes ({v['e2e']['cases']})"
-            elif v["e2e"]["files"]:
-                e2e = "empty scaffold"
-            else:
-                e2e = "no"
+            status = v.get("e2e_status", "none")
+            e2e = {
+                "yes": f"yes ({v['e2e']['cases']})",
+                "token": f"token ({v['e2e']['cases']})",
+                "scaffold": "empty scaffold",
+                "none": "no",
+            }[status]
             lines.append(
                 f"| {key.split('/')[1]} | {v['test_level']} | {e2e} "
                 f"| {', '.join(v['coverage_tools']) or 'no'} "
