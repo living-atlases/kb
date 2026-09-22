@@ -22,6 +22,8 @@ import yaml
 from chromadb.utils import embedding_functions
 from git import InvalidGitRepositoryError, Repo
 
+from kb_testfiles import TEST_CODE_EXTENSIONS, classify
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 KB_HOME = Path(os.environ.get("KB_HOME", Path(__file__).parent.parent))
@@ -94,6 +96,8 @@ def expand_repos(manifest: dict) -> list[dict]:
                 has_wiki = False
                 index_releases = True
                 index_issues = org in ALA_ORGS
+                superseded_by = None
+                superseded_note = None
             else:
                 name = entry["name"]
                 branch = entry.get("branch", default_branch)
@@ -101,6 +105,8 @@ def expand_repos(manifest: dict) -> list[dict]:
                 has_wiki = bool(entry.get("wiki", False))
                 index_releases = bool(entry.get("releases", True))
                 index_issues = bool(entry.get("issues", org in ALA_ORGS))
+                superseded_by = entry.get("superseded_by")
+                superseded_note = entry.get("superseded_note")
             repos.append(
                 {
                     "org": org,
@@ -112,6 +118,8 @@ def expand_repos(manifest: dict) -> list[dict]:
                     "index_releases": index_releases,
                     "index_issues": index_issues,
                     "content_type": "source",
+                    "superseded_by": superseded_by,
+                    "superseded_note": superseded_note,
                 }
             )
             if has_wiki:
@@ -265,6 +273,18 @@ def index_repo(
         if not text or not text.strip():
             continue
 
+        # Test code is indexed and tagged so "what does collectory actually
+        # check?" is answerable. Test *resources* are not: the JSON/XML/CSV
+        # fixtures in the same tree are 78% of the volume (checklistbank's
+        # alone would add 59k chunks) and answer nothing anyone asks in prose.
+        chunk_type = content_type
+        if content_type == "source":
+            kind = classify(str(rel), file_path.name, text)
+            if kind != "main":
+                if file_path.suffix.lower() not in TEST_CODE_EXTENSIONS:
+                    continue
+                chunk_type = "test"
+
         for i, chunk in enumerate(chunk_text(text)):
             if not chunk.strip():
                 continue
@@ -276,7 +296,7 @@ def index_repo(
                     "org": repo_meta["org"],
                     "file": str(rel),
                     "chunk": i,
-                    "content_type": content_type,
+                    "content_type": chunk_type,
                 }
             )
             count += 1

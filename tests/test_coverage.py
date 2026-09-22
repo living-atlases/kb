@@ -424,3 +424,39 @@ def test_empty_scaffold_is_named_as_such():
     entry = {"test_level": "low", "e2e_status": kc.e2e_status(0, 1),
              "coverage_measured": False, "coverage_tools": []}
     assert "never filled in" in kc.assess(entry)
+
+
+# ── Superseded components ─────────────────────────────────────────────────────
+
+def test_assessment_names_the_replacement_when_superseded():
+    entry = {
+        "test_level": "minimal", "e2e_status": "token",
+        "coverage_measured": False, "coverage_tools": [],
+        "superseded_by": "AtlasOfLivingAustralia/atlas-index",
+        "superseded_note": "UI replaced by atlas-index/occurrence-ui (90%)",
+    }
+    text = kc.assess(entry)
+    assert "Being replaced by AtlasOfLivingAustralia/atlas-index" in text
+    assert "occurrence-ui" in text
+
+
+def test_scan_alone_never_claims_a_replacement(fake_repo):
+    """scan_repo only sees a directory; the manifest knows about successors."""
+    entry = kc.scan_repo(fake_repo)
+    assert entry["superseded_by"] is None
+    assert "Being replaced" not in entry["assessment"]
+
+
+def test_run_stamps_supersession_from_the_manifest(tmp_path, monkeypatch, fake_repo):
+    monkeypatch.setattr(kc, "TESTING_FILE", tmp_path / "testing.json")
+    monkeypatch.setattr(kc, "REPOS_DIR", fake_repo.parent.parent)
+
+    kc.run([{
+        "org": "org", "name": "thing",
+        "superseded_by": "AtlasOfLivingAustralia/atlas-index",
+        "superseded_note": "UI replaced by atlas-index/occurrence-ui (90%)",
+    }])
+
+    entry = kc.load_testing()["org/thing"]
+    assert entry["superseded_by"] == "AtlasOfLivingAustralia/atlas-index"
+    assert "Being replaced" in entry["assessment"]

@@ -33,6 +33,7 @@ from pathlib import Path
 
 # Deployed side-by-side in {kb_home}/scripts, so a flat import works.
 from kb_indexer import KB_HOME, REPOS_DIR, expand_repos, load_manifest
+from kb_testfiles import classify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -75,35 +76,6 @@ RE_SPOCK = re.compile(r'^\s*(?:def|void)\s+(?:"[^"]+"|\'[^\']+\')\s*\(', re.M)
 RE_PY = re.compile(r"^\s*(?:async\s+)?def\s+test\w*\s*\(", re.M)
 RE_JS = re.compile(r"^\s*(?:it|test|testWidgets)\s*(?:\.\w+)?\s*\(", re.M)
 RE_FEATURE = re.compile(r"^\s*Scenario(?:\s+Outline)?\s*:", re.M)
-
-# ── Classifying a test file ───────────────────────────────────────────────────
-
-E2E_DIRS = {
-    "cypress", "e2e", "integration_test", "playwright", "functional-test",
-    "functional-tests", "acceptance-test", "acceptance-tests", "uitest", "uitests",
-}
-INT_DIRS = {"integration-test", "integration-tests"}
-UNIT_DIRS = {"test", "tests", "spec", "specs"}
-
-RE_E2E_FILE = re.compile(r"(?:^|[/.-])(e2e|cypress|playwright|selenium|geb)\b", re.I)
-RE_INT_FILE = re.compile(r"(IT|ITCase|IntegrationTest|IntegrationSpec|IntSpec)\.\w+$")
-RE_TEST_FILE = re.compile(
-    r"(Test|Tests|TestCase|Spec)\.(java|groovy|kt|scala)$"
-    r"|^test_.*\.py$|_test\.py$|_test\.dart$|_test\.go$"
-    r"|\.(test|spec)\.(js|jsx|ts|tsx)$"
-)
-
-RE_CONTEXT = re.compile(
-    r"@SpringBootTest|Testcontainers|GenericContainer|@MicronautTest|@Integration\b"
-)
-# Browser-driving tests are e2e wherever they live. This matters: Grails puts
-# Geb specs under src/integration-test, so classifying by path alone would file
-# every ALA browser test as an integration test.
-RE_BROWSER = re.compile(
-    r"\bgeb\.(spock|Browser)|GebSpec|GebReportingSpec|browser\.(go|at)\b"
-    r"|@playwright/test|\bpage\.goto\(|from ['\"]cypress|\bcy\.\w+\(|webdriver|selenium",
-    re.I,
-)
 
 # ── Coverage tooling signals ──────────────────────────────────────────────────
 
@@ -195,40 +167,16 @@ def assess(entry: dict) -> str:
         if entry["coverage_measured"]
         else "coverage is never measured"
     )
-    return "; ".join(parts) + "."
+    sentence = "; ".join(parts) + "."
+    if entry.get("superseded_by"):
+        sentence += f" Being replaced by {entry['superseded_by']} — {entry['superseded_note']}."
+    return sentence
 
 
 log = logging.getLogger("kb_coverage")
 
 
 # ── Scanning ──────────────────────────────────────────────────────────────────
-
-def classify(rel: str, name: str, text: str) -> str:
-    """Return 'main', 'unit', 'integration' or 'e2e' for one source file."""
-    parts = rel.split("/")
-    comps = set(parts[:-1])
-
-    # Anything under src/main is production, whatever it is called. atlas-index
-    # really does ship a src/main/java/au/org/ala/Test.java, which the filename
-    # rules below would otherwise count as a test file.
-    if "src/main/" in rel:
-        return "main"
-
-    if name.endswith(".feature"):
-        return "e2e"
-    if comps & E2E_DIRS or RE_E2E_FILE.search(rel.lower()):
-        return "e2e"
-    if comps & INT_DIRS or RE_INT_FILE.search(name):
-        return "e2e" if RE_BROWSER.search(text) else "integration"
-
-    if not (comps & UNIT_DIRS or RE_TEST_FILE.search(name)):
-        return "main"
-    if RE_BROWSER.search(text):
-        return "e2e"
-    if RE_CONTEXT.search(text):
-        return "integration"
-    return "unit"
-
 
 def count_cases(name: str, text: str) -> int:
     """Number of declared test cases in one test file, by framework."""
@@ -333,6 +281,8 @@ def scan_repo(repo_dir: Path) -> dict:
     res["has_e2e"] = res["e2e_status"] == "yes"
     res["coverage_measured"] = bool(res["coverage_tools"])
     res["test_level"] = rate(res["cases_per_kloc"], res["total_cases"], res["main_loc"])
+    res["superseded_by"] = None
+    res["superseded_note"] = None
     res["assessment"] = assess(res)
     return res
 
@@ -401,6 +351,14 @@ def run(repos: list[dict]) -> None:
             continue
         entry["status"] = "ok"
         entry["last_commit"] = last_commit(repo_dir)
+        # A component atlas-index already replaces is not comparable with one
+        # still being built on: its test counts are a snapshot of something on
+        # the way out, not a gap somebody should be asked to close.
+        entry["superseded_by"] = repo_meta.get("superseded_by")
+        entry["superseded_note"] = repo_meta.get("superseded_note")
+        # Recomputed: the sentence names the replacement, which scan_repo
+        # cannot know — it only sees a directory.
+        entry["assessment"] = assess(entry)
         data[key] = entry
         log.info(
             "%s: %d cases (%d unit / %d integration / %d e2e) over %d kLOC",
@@ -441,6 +399,10 @@ def render_report(data: dict, org: str | None = None) -> str:
         "against the size of the code they cover; components under "
         f"{MIN_LOC_TO_RATE // 1000} kLOC are left unscored because the ratio is "
         "noise there. Not measured line coverage.",
+        "",
+        "Components marked *(legacy)* are already being replaced (see "
+        "`superseded_by`): a thin test suite there is a component on the way "
+        "out, not a gap to close.",
     ]
     for scope in sorted({k.split("/")[0] for k in rows}):
         scoped = {k: v for k, v in rows.items() if k.startswith(scope + "/")}
@@ -468,8 +430,11 @@ def render_report(data: dict, org: str | None = None) -> str:
                 "scaffold": "empty scaffold",
                 "none": "no",
             }[status]
+            name = key.split("/")[1]
+            if v.get("superseded_by"):
+                name += " *(legacy)*"
             lines.append(
-                f"| {key.split('/')[1]} | {v['test_level']} | {e2e} "
+                f"| {name} | {v['test_level']} | {e2e} "
                 f"| {', '.join(v['coverage_tools']) or 'no'} "
                 f"| {v['unit']['cases']} | {v['integration']['cases']} "
                 f"| {v['e2e']['cases']} | {v['total_cases']} | {v['main_loc'] // 1000} |"

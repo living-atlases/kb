@@ -246,8 +246,9 @@ async def query_ala_kb(
 ) -> str:
     """Query the ALA (Atlas of Living Australia) Knowledge Base.
 
-    content_type: optionally restrict results to 'release' (GitHub release notes /
-    changelogs) or 'source' (repo files). Omit for both.
+    content_type: optionally restrict results to 'source' (production code),
+    'test' (test code — what a component actually checks), 'release' (GitHub
+    release notes / changelogs), 'issue'/'pr', 'wiki' or 'faq'. Omit for all.
     """
     return await handle_query(
         {
@@ -273,8 +274,8 @@ async def answer_ala_kb(
     list of the sources it cited. Best for non-Claude clients or when you want a
     ready-to-use answer; for your own synthesis, use query_ala_kb.
 
-    content_type: optionally restrict retrieval to 'faq', 'wiki', 'source' or
-    'release'. Omit for all.
+    content_type: optionally restrict retrieval to 'faq', 'wiki', 'source',
+    'test', 'release', 'issue' or 'pr'. Omit for all.
     """
     return await handle_answer(
         {

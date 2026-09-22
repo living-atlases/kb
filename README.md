@@ -139,8 +139,23 @@ curl -X POST https://kb.l-a.site/api/query \
   -d '{"question": "How do I configure collectory?", "collection": "la_toolkit_kb", "n_results": 5}'
 ```
 
-Add `"content_type": "release"` to search only GitHub release notes / changelogs
-(or `"source"` for repo files, `"issue"`/`"pr"` for GitHub issues & pull requests).
+Add `"content_type"` to restrict the search: `"source"` (production code),
+`"test"` (test code), `"release"` (release notes / changelogs), `"issue"`/`"pr"`,
+`"wiki"` or `"faq"`.
+
+### Test code
+
+Test code is indexed and tagged `content_type=test`, so "what does collectory
+actually check?" is answerable — a test suite is the most precise available
+statement of what a component is supposed to do. Test *resources* are not
+indexed: measured over the manifest, the JSON/XML/CSV fixtures in the same
+trees are 126k chunks against 28k of test code (checklistbank's datasets alone
+are 59k) and answer nothing anyone asks in prose. `kb_indexer` drops non-code
+files inside test trees; the bulk fixture directories stay in the blocklist.
+
+Test chunks are de-ranked slightly in `/api/answer` so they do not crowd out the
+implementation on an unfiltered question — pass `content_type=test` to go
+straight at them.
 
 ### GitHub issues & pull requests
 
@@ -184,6 +199,12 @@ curl https://kb.l-a.site/api/testing/AtlasOfLivingAustralia/collectory  # one co
 
 The watcher rescans a repo whenever it sees new commits, so the figures track
 the code. A full rescan is `ansible-playbook ansible/setup_kb.yml --tags reindex_coverage`.
+
+Components that `atlas-index` already replaces are marked `superseded_by` in
+[`ansible/repos.yml`](ansible/repos.yml) (source: the "Replaces" table in
+atlas-index's own README) and carried into `testing.json`, so a thin test suite
+on a component that is on its way out is not read as a gap somebody should be
+asked to close.
 
 `kb_coverage.py --report` renders the whole thing as a markdown table, reading
 either the local artifact or a deployed KB — so the table in a review or a

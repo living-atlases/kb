@@ -24,10 +24,16 @@ orgs:
       - collectory
       - name: biocache-service
         wiki: true
-      - biocache-hubs
-      - ala-bie-hub
+      - name: biocache-hubs
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "UI replaced by atlas-index/occurrence-ui (90% per its README)"
+      - name: ala-bie-hub
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "UI replaced by atlas-index/search-ui (90%)"
       - name: bie-index
         wiki: true
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "service replaced by atlas-index/search-service (90%)"
       - atlas-index
       - name: image-service
         wiki: true
@@ -36,20 +42,34 @@ orgs:
       - authoritative-lists
       - spatial-hub
       - spatial-service
-      - regions
-      - logger-service
+      - name: regions
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "UI replaced by atlas-index/regions-ui (100%)"
+      - name: logger-service
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "service being replaced by atlas-index/search-service (80%)"
       - ala-namematching-service
-      - ala-sensitive-data-service
-      - dashboard
+      - name: ala-sensitive-data-service
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "only its static home UI is replaced (sds-ui, 100%); the service itself stays"
+      - name: dashboard
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "UI and service both replaced by atlas-index (100%)"
       - alerts
-      - doi-service
+      - name: doi-service
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "UI and service both replaced by atlas-index (100%)"
       - userdetails
       - apikey
       - sds
       - ala-cas-5
       - helm-charts
-      - data-quality-filter-service
-      - ala-hub
+      - name: data-quality-filter-service
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "service replaced by atlas-index/search-service (95%)"
+      - name: ala-hub
+        superseded_by: AtlasOfLivingAustralia/atlas-index
+        superseded_note: "UI replaced by atlas-index/occurrence-ui (90%)"
       - name: volunteer-portal
         wiki: true
       - name: ecodata
@@ -134,13 +154,15 @@ blocklist:
   - "target/"
   - ".gradle/"
   - "molecule/"
-  # ── Test code & fixtures (huge noise: checklistbank test datasets were 45% of the index) ──
-  - "test/"
-  - "tests/"
+  # ── Test fixtures & data ──
+  # Test *code* is indexed (tagged content_type=test by kb_indexer, which also
+  # drops non-code files inside test trees). Test *resources* are not: measured
+  # over the whole manifest they are 126k chunks against 28k of actual test
+  # code — checklistbank's datasets alone are 59k. The patterns below cover the
+  # bulk directories; kb_indexer's extension rule catches the rest.
   - "datasets/"           # checklistbank-nub/src/test/resources/datasets/*-usages.json
   - "testdata/"
   - "test-data/"          # ecodata test fixtures (hyphenated variant of testdata/)
-  - "integration-test/"   # Grails src/integration-test (ecodata ~7k, fieldcapture ~3.6k: specs + JSON fixtures)
   - "fixtures/"
   # ── Vendored / generated front-end assets (Grails apps: volunteer-portal, ecodata, fieldcapture, biocollect) ──
   - "vendor/"

@@ -7,6 +7,26 @@ All notable changes to this project are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Test code is indexed, tagged `content_type=test`. Previously the blocklist
+  dropped `test/`, `tests/` and `integration-test/` wholesale, so the most
+  precise statement of what a component is supposed to do was the one thing the
+  KB could not read. Measured over the manifest, unblocking them naively would
+  add 126k chunks to a 195k index — but 98k of that is fixtures (checklistbank's
+  test datasets alone are 59k). `kb_indexer` now indexes only test files with a
+  code extension and tags them, which costs ~28k chunks (+14%). The fixture
+  directories stay blocked. Test chunks are de-ranked in `/api/answer` so they
+  do not crowd out the implementation; `content_type=test` goes at them
+  directly.
+
+  The classifier is shared with `kb_coverage.py` via a new `kb_testfiles.py`,
+  so what counts as a test file is defined once.
+
+- `superseded_by` / `superseded_note` in `ansible/repos.yml`, carried into
+  `testing.json` and both reports. Ten ALA components are already being
+  replaced by `atlas-index` (source: the "Replaces" table in its own README,
+  with the partial cases kept partial — `ala-sensitive-data-service` loses only
+  its static home UI). Without this, a table ranking components by test level
+  invites someone to fund test work on software that is on its way out.
 - Test inventory (`kb_coverage.py`, `GET /api/testing`, MCP tool
   `get_ala_test_coverage`). "How well tested is component X?" was unanswerable
   from the semantic index: the blocklist drops `test/`, `tests/` and

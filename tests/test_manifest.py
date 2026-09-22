@@ -117,3 +117,46 @@ def test_generated_files_are_blocked(blocklist, rel):
 )
 def test_real_source_survives_the_blocklist(blocklist, rel):
     assert not ki.is_blocked(Path(rel), blocklist)
+
+
+# ── Superseded components ─────────────────────────────────────────────────────
+
+def _repo_entries(manifest):
+    for org, cfg in manifest["orgs"].items():
+        for entry in cfg.get("repos", []):
+            if isinstance(entry, dict):
+                yield org, entry
+
+
+def test_superseded_by_resolves_to_an_indexed_repo(manifest):
+    """A successor nobody indexes is a dangling pointer in every report."""
+    known = {f"{org}/{e['name'] if isinstance(e, dict) else e}"
+             for org, cfg in manifest["orgs"].items()
+             for e in cfg.get("repos", [])}
+    marked = [(org, e) for org, e in _repo_entries(manifest) if e.get("superseded_by")]
+    assert marked, "the manifest records no supersessions at all"
+    for org, entry in marked:
+        assert entry["superseded_by"] in known, f"{org}/{entry['name']}"
+
+
+def test_superseded_entries_explain_themselves(manifest):
+    """The note is what a reader sees; an unexplained 'legacy' tag is worse
+    than none, because 'UI replaced (90%)' and 'fully replaced' differ."""
+    for org, entry in _repo_entries(manifest):
+        if entry.get("superseded_by"):
+            note = entry.get("superseded_note", "")
+            assert note and len(note) > 20, f"{org}/{entry['name']}"
+
+
+def test_nothing_is_recorded_as_superseding_itself(manifest):
+    for org, entry in _repo_entries(manifest):
+        if entry.get("superseded_by"):
+            assert entry["superseded_by"] != f"{org}/{entry['name']}"
+
+
+def test_test_code_is_no_longer_blocked(blocklist):
+    """Test *code* is indexed (tagged content_type=test); only fixtures are not."""
+    assert not ki.is_blocked(Path("src/test/java/au/org/ala/FooTest.java"), blocklist)
+    assert not ki.is_blocked(Path("src/integration-test/groovy/FooSpec.groovy"), blocklist)
+    assert ki.is_blocked(Path("src/test/resources/datasets/x-usages.json"), blocklist)
+    assert ki.is_blocked(Path("test/fixtures/sample.json"), blocklist)

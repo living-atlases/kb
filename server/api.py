@@ -101,7 +101,8 @@ class QueryRequest(BaseModel):
     n_results: int = Field(default=5, ge=1, le=10)
     content_type: Optional[str] = Field(
         default=None,
-        description="Filter by content type: 'source' (repo files), 'release' "
+        description="Filter by content type: 'source' (production code), "
+        "'test' (test code — what a component actually checks), 'release' "
         "(GitHub release notes), 'issue'/'pr' (GitHub issues & pull requests), "
         "'wiki', or 'faq'. None = all.",
     )
@@ -172,6 +173,10 @@ CONTENT_TYPE_BOOST = {
     # surface only when clearly relevant, never above curated answers or source.
     "issue": -0.04,
     "pr": -0.04,
+    # Test code answers "what is this supposed to do?" precisely, but it echoes
+    # the vocabulary of the code it tests, so unfiltered it crowds out the
+    # implementation. De-ranked here, reachable with content_type="test".
+    "test": -0.05,
 }
 
 
