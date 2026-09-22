@@ -1,0 +1,33 @@
+{
+  "_comment": "The suite needs fastapi/chromadb/pytest-asyncio, which live in ./venv (see README: `pytest tests/ -v` from the venv). The system python3 has none of them, so a bare `python3 -m pytest` fails at import on tests/test_api.py and tests/test_chat.py and takes the whole run down — tests/ has an __init__.py, so a collection error is fatal, not a skip. Point every rule at the venv interpreter and run the whole suite: it takes ~3s, and the modules are coupled enough (repos.yml drives kb_indexer, kb_coverage and the API) that a partial run proves little.",
+  "timeout": 600,
+  "uncovered": "warn",
+  "ignore": [
+    "**/*.md",
+    "inventory*.ini",
+    "LICENSE",
+    ".gitignore",
+    "faq/**",
+    "internal-docs/**",
+    "dart/**",
+    "galah_downloads/**"
+  ],
+  "rules": [
+    {
+      "match": ["ansible/files/*.py", "server/**/*.py", "tests/**/*.py"],
+      "run": "./venv/bin/python -m pytest -q tests/"
+    },
+    {
+      "match": ["ansible/repos.yml"],
+      "run": "./venv/bin/python -m pytest -q tests/test_manifest.py tests/test_coverage.py tests/test_indexer_testfiles.py"
+    },
+    {
+      "match": ["ansible/*.yml"],
+      "run": "./venv/bin/python -c \"import sys,yaml;[yaml.safe_load(open(f)) for f in sys.argv[1:]] and print('yaml ok')\" {file} && ./venv/bin/python -m pytest -q tests/test_manifest.py"
+    },
+    {
+      "match": [".github/workflows/*.yml"],
+      "run": "./venv/bin/python -c \"import yaml;yaml.safe_load(open('{file}'));print('yaml ok')\""
+    }
+  ]
+}
