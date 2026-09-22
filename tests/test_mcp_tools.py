@@ -212,3 +212,34 @@ async def test_testing_tool_names_the_exception_on_timeout(mock_httpx_client):
     result = await handle_testing({}, http_client=mock_httpx_client)
 
     assert "ReadTimeout" in result
+
+
+@pytest.mark.asyncio
+async def test_every_handler_is_registered_as_an_mcp_tool():
+    """A handler that exists but is never registered is invisible to clients.
+
+    get_ala_test_coverage was defined *after* the `mcp.run()` block, so the
+    decorator never executed when the server ran as a script: the tool passed
+    every handler test and still did not appear in tools/list.
+    """
+    import server.mcp_http as m
+
+    registered = {t.name for t in await m.mcp.list_tools()}
+    assert registered == {
+        "query_ala_kb",
+        "answer_ala_kb",
+        "list_ala_kb_collections",
+        "get_ala_component_versions",
+        "get_ala_test_coverage",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stdio_advertises_the_same_tools_as_http():
+    """The stdio server declares its schemas by hand — they drift otherwise."""
+    import server.mcp_http as m
+    import server.mcp_stdio as st
+
+    http_names = {t.name for t in await m.mcp.list_tools()}
+    stdio_names = {t.name for t in await st.list_tools()}
+    assert stdio_names == http_names

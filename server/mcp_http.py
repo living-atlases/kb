@@ -303,10 +303,6 @@ async def get_ala_component_versions(repo: str | None = None) -> str:
     return await handle_versions({"repo": repo})
 
 
-if __name__ == "__main__":
-    mcp.run(transport="streamable-http")
-
-
 @mcp.tool()
 async def get_ala_test_coverage(repo: str | None = None, org: str | None = None) -> str:
     """Test inventory of ALA / GBIF components: unit, integration and e2e case counts.
@@ -322,3 +318,7 @@ async def get_ala_test_coverage(repo: str | None = None, org: str | None = None)
     whole organisation, or neither for everything.
     """
     return await handle_testing({"repo": repo, "org": org})
+
+
+if __name__ == "__main__":
+    mcp.run(transport="streamable-http")
