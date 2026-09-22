@@ -15,6 +15,7 @@ from server.mcp_http import (  # noqa: E402
     handle_answer,
     handle_list_collections,
     handle_query,
+    handle_testing,
     handle_versions,
 )
 
@@ -64,6 +65,17 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="get_ala_test_coverage",
+            description="Test inventory of ALA/GBIF components: unit, integration and e2e case counts per repo, plus the coverage tooling each build configures. Not measured line coverage.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "repo": {"type": "string", "description": "Component as 'ORG/NAME' (e.g. 'AtlasOfLivingAustralia/biocache-service'); omit for all"},
+                    "org": {"type": "string", "description": "Restrict to one organisation (e.g. 'gbif', 'AtlasOfLivingAustralia')"},
+                },
+            },
+        ),
     ]
 
 
@@ -82,6 +94,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             text = await handle_list_collections(arguments, http_client=client)
         elif name == "get_ala_component_versions":
             text = await handle_versions(arguments, http_client=client)
+        elif name == "get_ala_test_coverage":
+            text = await handle_testing(arguments, http_client=client)
         else:
             text = f"Unknown tool: {name}"
     return [TextContent(type="text", text=text)]

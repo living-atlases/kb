@@ -249,7 +249,7 @@
         owner: "{{ kb_user }}"
         group: "{{ kb_user }}"
         mode: "0755"
-      tags: [reindex, reindex_releases, reindex_issues, scripts]
+      tags: [reindex, reindex_releases, reindex_issues, reindex_coverage, scripts]
 
     - name: "Phase 7c: Install kb_releases.py"
       ansible.builtin.copy:
@@ -268,6 +268,15 @@
         group: "{{ kb_user }}"
         mode: "0755"
       tags: [reindex, reindex_issues, scripts]
+
+    - name: "Phase 7e: Install kb_coverage.py"
+      ansible.builtin.copy:
+        src: kb_coverage.py
+        dest: "{{ kb_home }}/scripts/kb_coverage.py"
+        owner: "{{ kb_user }}"
+        group: "{{ kb_user }}"
+        mode: "0755"
+      tags: [reindex, reindex_coverage, scripts]
 
     - name: "Phase 7d: Install GitHub token env file (for releases API)"
       ansible.builtin.copy:
@@ -358,6 +367,26 @@
       when: reindex_repo != ""
       tags: [reindex, reindex_issues]
 
+    - name: "Phase 8h: Scan test inventory + write testing.json (all repos)"
+      # No network, no embeddings — a filesystem walk over the clones Phase 8
+      # already produced, so it must run after them.
+      ansible.builtin.shell: "{{ kb_home }}/venv/bin/python3 scripts/kb_coverage.py --all"
+      args:
+        chdir: "{{ kb_home }}"
+      become_user: "{{ kb_user }}"
+      timeout: 1800
+      when: reindex_repo == ""
+      tags: [reindex, reindex_coverage]
+
+    - name: "Phase 8i: Scan test inventory for single repo"
+      ansible.builtin.shell: "{{ kb_home }}/venv/bin/python3 scripts/kb_coverage.py --repo {{ reindex_repo }}"
+      args:
+        chdir: "{{ kb_home }}"
+      become_user: "{{ kb_user }}"
+      timeout: 600
+      when: reindex_repo != ""
+      tags: [reindex, reindex_coverage]
+
     # ── Phase 9: Cron jobs ────────────────────────────────────────────────────
 
     - name: "Phase 9: Configure cron jobs"
@@ -393,6 +422,7 @@
           WorkingDirectory={{ kb_home }}
           Environment=CHROMA_PATH={{ chroma_path }}
           Environment=KB_VERSIONS_FILE={{ kb_home }}/data/versions.json
+          Environment=KB_TESTING_FILE={{ kb_home }}/data/testing.json
           ExecStart={{ kb_home }}/venv/bin/python -m uvicorn server.api:app --host 127.0.0.1 --port {{ rest_api_port }}
           Restart=always
           RestartSec=5

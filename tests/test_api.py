@@ -1,3 +1,4 @@
+import json
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
@@ -232,3 +233,62 @@ def test_health_does_not_touch_chroma(test_client):
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_testing_endpoint_reads_file(test_client, tmp_path):
+    import server.api as api_module
+    tfile = tmp_path / "testing.json"
+    tfile.write_text(json.dumps({
+        "gbif/pipelines": {"status": "ok", "total_cases": 1126, "cases_per_kloc": 11.6},
+    }))
+    original = api_module.TESTING_FILE
+    api_module.TESTING_FILE = str(tfile)
+    api_module._testing_cache.update({"mtime": 0.0, "data": None})
+    try:
+        all_resp = test_client.get("/api/testing")
+        assert all_resp.status_code == 200
+        assert all_resp.json()["gbif/pipelines"]["total_cases"] == 1126
+
+        one_resp = test_client.get("/api/testing/gbif/pipelines")
+        assert one_resp.status_code == 200
+        assert one_resp.json()["cases_per_kloc"] == 11.6
+
+        missing = test_client.get("/api/testing/foo/bar")
+        assert missing.status_code == 404
+    finally:
+        api_module.TESTING_FILE = original
+        api_module._testing_cache.update({"mtime": 0.0, "data": None})
+
+
+def test_testing_endpoint_empty_when_no_file(test_client, tmp_path):
+    import server.api as api_module
+    original = api_module.TESTING_FILE
+    api_module.TESTING_FILE = str(tmp_path / "nonexistent.json")
+    api_module._testing_cache.update({"mtime": 0.0, "data": None})
+    try:
+        resp = test_client.get("/api/testing")
+        assert resp.status_code == 200
+        assert resp.json() == {}
+    finally:
+        api_module.TESTING_FILE = original
+        api_module._testing_cache.update({"mtime": 0.0, "data": None})
+
+
+def test_testing_endpoint_rereads_after_the_watcher_rewrites_it(test_client, tmp_path):
+    """The cache is mtime-keyed, so an hourly rescan must become visible."""
+    import os
+    import server.api as api_module
+    tfile = tmp_path / "testing.json"
+    tfile.write_text(json.dumps({"gbif/ipt": {"status": "ok", "total_cases": 413}}))
+    original = api_module.TESTING_FILE
+    api_module.TESTING_FILE = str(tfile)
+    api_module._testing_cache.update({"mtime": 0.0, "data": None})
+    try:
+        assert test_client.get("/api/testing").json()["gbif/ipt"]["total_cases"] == 413
+        tfile.write_text(json.dumps({"gbif/ipt": {"status": "ok", "total_cases": 500}}))
+        stat = tfile.stat()
+        os.utime(tfile, (stat.st_atime + 10, stat.st_mtime + 10))
+        assert test_client.get("/api/testing").json()["gbif/ipt"]["total_cases"] == 500
+    finally:
+        api_module.TESTING_FILE = original
+        api_module._testing_cache.update({"mtime": 0.0, "data": None})
