@@ -160,3 +160,14 @@ def test_test_code_is_no_longer_blocked(blocklist):
     assert not ki.is_blocked(Path("src/integration-test/groovy/FooSpec.groovy"), blocklist)
     assert ki.is_blocked(Path("src/test/resources/datasets/x-usages.json"), blocklist)
     assert ki.is_blocked(Path("test/fixtures/sample.json"), blocklist)
+
+
+def test_every_deployed_script_module_is_installed_by_ansible():
+    """kb_testfiles.py shipped as an import of kb_indexer but had no copy task,
+    so the deployed indexer died on ImportError until the next full run."""
+    import re
+    root = Path(__file__).resolve().parent.parent
+    setup = (root / "ansible" / "setup_kb.yml").read_text()
+    installed = set(re.findall(r"src:\s+(kb_\w+\.py)", setup))
+    on_disk = {p.name for p in (root / "ansible" / "files").glob("kb_*.py")}
+    assert on_disk - installed == set(), f"never installed: {on_disk - installed}"
