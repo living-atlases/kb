@@ -28,6 +28,14 @@ All notable changes to this project are documented here. The format is based on
   It is not measured line coverage, which would need a full build per repo.
   Each entry carries a `test_level` (`good`/`moderate`/`low`/`minimal`/`none`)
   and a one-sentence `assessment` so the output is usable without reading code.
+  Components under 2 kLOC are left `unscored`: a 1 kLOC wrapper with 7 tests
+  outranked biocache-service, which is arithmetic, not a verdict. There is
+  deliberately no floor on the number of cases — spatial-service has 14 over
+  84 kLOC, and that is the most important finding in the set.
+
+  `kb_coverage.py --report [--api URL] [--org ORG]` renders it as a markdown
+  table from the local artifact or a deployed KB, so a table in a review is a
+  command rather than a copy-paste that goes stale.
 - Index `AtlasOfLivingAustralia/quail`, the QGIS plugin for querying Living
   Atlas occurrence data. Blocklist `resources.py`: the Qt resource compiler
   writes a single 915 KB file of base64 blobs there (~460 chunks in a 1.4 MB

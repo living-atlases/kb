@@ -185,6 +185,15 @@ curl https://kb.l-a.site/api/testing/AtlasOfLivingAustralia/collectory  # one co
 The watcher rescans a repo whenever it sees new commits, so the figures track
 the code. A full rescan is `ansible-playbook ansible/setup_kb.yml --tags reindex_coverage`.
 
+`kb_coverage.py --report` renders the whole thing as a markdown table, reading
+either the local artifact or a deployed KB — so the table in a review or a
+status update is a command, not a copy-paste that goes stale:
+
+```bash
+python3 ansible/files/kb_coverage.py --report --api https://kb.l-a.site
+python3 ansible/files/kb_coverage.py --report --api https://kb.l-a.site --org gbif
+```
+
 ### AI chat (RAG + streaming)
 
 ```bash

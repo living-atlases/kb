@@ -393,6 +393,70 @@ def run(repos: list[dict]) -> None:
     log.info("Wrote %s (%d repos)", TESTING_FILE, len(data))
 
 
+# ── Report ────────────────────────────────────────────────────────────────────
+
+LEVEL_ORDER = ["good", "moderate", "low", "minimal", "none", "unscored"]
+
+
+def load_report_data(api: str | None) -> dict:
+    """Report input: the local artifact, or a deployed KB's /api/testing."""
+    if not api:
+        return load_testing()
+    import urllib.request
+    with urllib.request.urlopen(api.rstrip("/") + "/api/testing", timeout=30) as r:
+        return json.loads(r.read())
+
+
+def render_report(data: dict, org: str | None = None) -> str:
+    rows = {
+        k: v for k, v in data.items()
+        if v.get("status") == "ok" and (not org or k.split("/")[0] == org)
+    }
+    if not rows:
+        return "No test data available."
+
+    lines = [
+        "# Test inventory",
+        "",
+        "Declared test cases per component, split by type. `level` weights them "
+        "against the size of the code they cover; components under "
+        f"{MIN_LOC_TO_RATE // 1000} kLOC are left unscored because the ratio is "
+        "noise there. Not measured line coverage.",
+    ]
+    for scope in sorted({k.split("/")[0] for k in rows}):
+        scoped = {k: v for k, v in rows.items() if k.startswith(scope + "/")}
+        tally = {lvl: 0 for lvl in LEVEL_ORDER}
+        for v in scoped.values():
+            tally[v["test_level"]] += 1
+        lines += [
+            "",
+            f"## {scope} — {len(scoped)} components",
+            "",
+            "Spread: " + " · ".join(f"{lvl} {n}" for lvl, n in tally.items() if n),
+            "",
+            "| Component | Level | e2e | Coverage measured | unit | integration | e2e cases | total | prod kLOC |",
+            "|---|---|---|---|--:|--:|--:|--:|--:|",
+        ]
+        for key in sorted(
+            scoped, key=lambda k: (LEVEL_ORDER.index(scoped[k]["test_level"]),
+                                   -scoped[k]["total_cases"])
+        ):
+            v = scoped[key]
+            if v["e2e"]["cases"]:
+                e2e = f"yes ({v['e2e']['cases']})"
+            elif v["e2e"]["files"]:
+                e2e = "empty scaffold"
+            else:
+                e2e = "no"
+            lines.append(
+                f"| {key.split('/')[1]} | {v['test_level']} | {e2e} "
+                f"| {', '.join(v['coverage_tools']) or 'no'} "
+                f"| {v['unit']['cases']} | {v['integration']['cases']} "
+                f"| {v['e2e']['cases']} | {v['total_cases']} | {v['main_loc'] // 1000} |"
+            )
+    return "\n".join(lines)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -400,11 +464,25 @@ def main() -> None:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--all", action="store_true", help="Scan every cloned repo")
     group.add_argument("--repo", metavar="ORG/NAME", help="Rescan a single repo")
+    group.add_argument(
+        "--report", action="store_true",
+        help="Print a markdown report from existing data; scans nothing",
+    )
+    parser.add_argument(
+        "--api", metavar="URL",
+        help="With --report: read from a deployed KB (e.g. https://kb.l-a.site) "
+             "instead of the local data/testing.json",
+    )
+    parser.add_argument("--org", help="With --report: restrict to one organisation")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
+
+    if args.report:
+        print(render_report(load_report_data(args.api), args.org))
+        return
 
     repos = scannable_repos(load_manifest())
     if args.repo:

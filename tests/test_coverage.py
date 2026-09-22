@@ -340,3 +340,53 @@ def test_assessment_names_the_gaps(tmp_path):
     assert entry["coverage_measured"] is False
     assert "no end-to-end tests" in entry["assessment"]
     assert "coverage is never measured" in entry["assessment"]
+
+
+# ── --report ──────────────────────────────────────────────────────────────────
+
+REPORT_DATA = {
+    "gbif/pipelines": {
+        "status": "ok", "test_level": "good", "total_cases": 1126,
+        "unit": {"cases": 988, "files": 218}, "integration": {"cases": 138, "files": 36},
+        "e2e": {"cases": 0, "files": 0}, "main_loc": 97035,
+        "coverage_tools": ["sonar"], "cases_per_kloc": 11.6,
+    },
+    "AtlasOfLivingAustralia/collectory": {
+        "status": "ok", "test_level": "minimal", "total_cases": 116,
+        "unit": {"cases": 116, "files": 7}, "integration": {"cases": 0, "files": 0},
+        "e2e": {"cases": 0, "files": 1}, "main_loc": 58427,
+        "coverage_tools": [], "cases_per_kloc": 1.99,
+    },
+    "AtlasOfLivingAustralia/ala-bie": {"status": "not_cloned"},
+}
+
+
+def test_report_groups_by_org_and_ranks_by_level():
+    out = kc.render_report(REPORT_DATA)
+    assert "## gbif — 1 components" in out
+    assert "## AtlasOfLivingAustralia — 1 components" in out
+    # Never-cloned repos have nothing to report.
+    assert "ala-bie" not in out
+
+
+def test_report_distinguishes_an_empty_e2e_scaffold_from_no_e2e():
+    out = kc.render_report(REPORT_DATA)
+    assert "empty scaffold" in out   # collectory: a directory, no cases
+    assert "| no |" in out or "| no " in out  # pipelines: nothing at all
+
+
+def test_report_can_be_scoped_to_one_org():
+    out = kc.render_report(REPORT_DATA, org="gbif")
+    assert "pipelines" in out
+    assert "collectory" not in out
+
+
+def test_report_on_empty_data_says_so():
+    assert kc.render_report({}) == "No test data available."
+
+
+def test_report_reads_the_local_artifact_when_no_api_given(tmp_path, monkeypatch):
+    target = tmp_path / "testing.json"
+    monkeypatch.setattr(kc, "TESTING_FILE", target)
+    kc.write_testing(REPORT_DATA)
+    assert kc.load_report_data(None) == REPORT_DATA
