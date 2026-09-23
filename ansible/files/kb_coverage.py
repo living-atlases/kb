@@ -33,7 +33,7 @@ from pathlib import Path
 
 # Deployed side-by-side in {kb_home}/scripts, so a flat import works.
 from kb_indexer import KB_HOME, REPOS_DIR, expand_repos, load_manifest
-from kb_testfiles import classify
+from kb_testfiles import classify, is_vendored
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -59,7 +59,18 @@ BUILD_FILES = {
     "setup.cfg", "gradle.properties", "codecov.yml", ".codecov.yml",
     "sonar-project.properties",
 }
-CI_FILES = {"jenkinsfile", ".travis.yml", ".gitlab-ci.yml"}
+CI_FILES = {"jenkinsfile", ".travis.yml", ".gitlab-ci.yml", "bitbucket-pipelines.yml"}
+
+# Which CI system, not just "is there one". GBIF standardised on Jenkins, so
+# looking at .github/workflows alone reported its repos as not running tests —
+# the opposite of the truth.
+CI_SYSTEMS = {
+    "github-actions": lambda d: (d / ".github" / "workflows").is_dir(),
+    "jenkins": lambda d: (d / "Jenkinsfile").exists(),
+    "travis": lambda d: (d / ".travis.yml").exists(),
+    "gitlab": lambda d: (d / ".gitlab-ci.yml").exists(),
+    "bitbucket": lambda d: (d / "bitbucket-pipelines.yml").exists(),
+}
 
 GIT_TIMEOUT = 20
 
@@ -218,6 +229,7 @@ def scan_repo(repo_dir: Path) -> dict:
     res = {
         "main_files": 0,
         "main_loc": 0,
+        "vendored_loc": 0,
         "unit": {"files": 0, "cases": 0},
         "integration": {"files": 0, "cases": 0},
         "e2e": {"files": 0, "cases": 0},
@@ -246,10 +258,14 @@ def scan_repo(repo_dir: Path) -> dict:
             text = read_text(fp)
             kind = classify(rel, fn, text)
             if kind == "main":
+                loc = text.count("\n") + 1
                 res["main_files"] += 1
-                res["main_loc"] += text.count("\n") + 1
-                ext = fp.suffix.lower()
-                res["languages"][ext] = res["languages"].get(ext, 0) + 1
+                res["main_loc"] += loc
+                if is_vendored(rel, fn, fp.suffix.lower()):
+                    res["vendored_loc"] += loc
+                else:
+                    ext = fp.suffix.lower()
+                    res["languages"][ext] = res["languages"].get(ext, 0) + 1
             else:
                 res[kind]["files"] += 1
                 res[kind]["cases"] += count_cases(fn, text)
@@ -259,7 +275,8 @@ def scan_repo(repo_dir: Path) -> dict:
     res["coverage_tools"] = sorted(
         k for k, rx in COV_SIGNALS.items() if rx.search(build_blob + "\n" + ci_blob)
     )
-    res["has_ci"] = bool(ci_blob)
+    res["ci_systems"] = sorted(k for k, probe in CI_SYSTEMS.items() if probe(repo_dir))
+    res["has_ci"] = bool(res["ci_systems"])
     res["ci_runs_tests"] = bool(ci_blob and RE_CI_TEST.search(ci_blob))
     res["stack"] = detect_stack(build_blob, res["languages"])
     res["badge_coverage_pct"] = None
@@ -271,8 +288,12 @@ def scan_repo(repo_dir: Path) -> dict:
 
     res["total_cases"] = sum(res[k]["cases"] for k in ("unit", "integration", "e2e"))
     res["test_files"] = sum(res[k]["files"] for k in ("unit", "integration", "e2e"))
+    # Rate against code this project actually wrote. main_loc is kept so the
+    # size of the vendored problem stays visible instead of being silently
+    # corrected away.
+    res["own_loc"] = res["main_loc"] - res["vendored_loc"]
     res["cases_per_kloc"] = (
-        round(res["total_cases"] / (res["main_loc"] / 1000), 2) if res["main_loc"] else 0.0
+        round(res["total_cases"] / (res["own_loc"] / 1000), 2) if res["own_loc"] else 0.0
     )
 
     # Derived, plain-language fields: the point of the whole artifact is that
@@ -280,7 +301,7 @@ def scan_repo(repo_dir: Path) -> dict:
     res["e2e_status"] = e2e_status(res["e2e"]["cases"], res["e2e"]["files"])
     res["has_e2e"] = res["e2e_status"] == "yes"
     res["coverage_measured"] = bool(res["coverage_tools"])
-    res["test_level"] = rate(res["cases_per_kloc"], res["total_cases"], res["main_loc"])
+    res["test_level"] = rate(res["cases_per_kloc"], res["total_cases"], res["own_loc"])
     res["superseded_by"] = None
     res["superseded_note"] = None
     res["assessment"] = assess(res)
@@ -398,7 +419,9 @@ def render_report(data: dict, org: str | None = None) -> str:
         "Declared test cases per component, split by type. `level` weights them "
         "against the size of the code they cover; components under "
         f"{MIN_LOC_TO_RATE // 1000} kLOC are left unscored because the ratio is "
-        "noise there. Not measured line coverage.",
+        "noise there — and it is measured over the project's own code: third-party "
+        "libraries committed into the repo are counted separately under "
+        "`vendored kLOC`. Not measured line coverage.",
         "",
         "Components marked *(legacy)* are already being replaced (see "
         "`superseded_by`): a thin test suite there is a component on the way "
@@ -415,8 +438,8 @@ def render_report(data: dict, org: str | None = None) -> str:
             "",
             "Spread: " + " · ".join(f"{lvl} {n}" for lvl, n in tally.items() if n),
             "",
-            "| Component | Level | e2e | Coverage measured | unit | integration | e2e cases | total | prod kLOC |",
-            "|---|---|---|---|--:|--:|--:|--:|--:|",
+            "| Component | Level | e2e | Coverage measured | CI | unit | integration | e2e cases | total | own kLOC | vendored kLOC |",
+            "|---|---|---|---|---|--:|--:|--:|--:|--:|--:|",
         ]
         for key in sorted(
             scoped, key=lambda k: (LEVEL_ORDER.index(scoped[k]["test_level"]),
@@ -436,8 +459,11 @@ def render_report(data: dict, org: str | None = None) -> str:
             lines.append(
                 f"| {name} | {v['test_level']} | {e2e} "
                 f"| {', '.join(v['coverage_tools']) or 'no'} "
+                f"| {', '.join(v.get('ci_systems') or []) or 'none'} "
                 f"| {v['unit']['cases']} | {v['integration']['cases']} "
-                f"| {v['e2e']['cases']} | {v['total_cases']} | {v['main_loc'] // 1000} |"
+                f"| {v['e2e']['cases']} | {v['total_cases']} "
+                f"| {v.get('own_loc', v['main_loc']) // 1000} "
+                f"| {v.get('vendored_loc', 0) // 1000} |"
             )
     return "\n".join(lines)
 

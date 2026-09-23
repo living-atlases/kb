@@ -460,3 +460,92 @@ def test_run_stamps_supersession_from_the_manifest(tmp_path, monkeypatch, fake_r
     entry = kc.load_testing()["org/thing"]
     assert entry["superseded_by"] == "AtlasOfLivingAustralia/atlas-index"
     assert "Being replaced" in entry["assessment"]
+
+
+# ── Vendored libraries are not production code ────────────────────────────────
+
+@pytest.mark.parametrize("rel,vendored", [
+    ("grails-app/assets/javascripts/jquery-ui.js", True),
+    ("grails-app/assets/thirdparty/angular/angular.js", True),
+    ("web-app/js/bootstrap.min.js", True),
+    ("src/main/webapp/lib/tinymce/tinymce.js", True),
+    ("admin-ui/src/components/Search.tsx", False),
+    ("src/main/groovy/au/org/ala/Service.groovy", False),
+    # A Java file under a directory called lib is still somebody's code.
+    ("lib/src/main/java/au/org/ala/Helper.java", False),
+])
+def test_is_vendored(rel, vendored):
+    from kb_testfiles import is_vendored
+    import os
+    name = rel.split("/")[-1]
+    assert is_vendored(rel, name, os.path.splitext(name)[1]) is vendored
+
+
+def test_vendored_libraries_do_not_count_against_the_test_ratio(tmp_path):
+    """volunteer-portal shipped as 'the worst ratio in the catalogue' (0.34)
+    because 455k lines of TinyMCE counted as its production code. Over what it
+    actually wrote the figure is 4.4 — a different decision entirely."""
+    root = tmp_path / "grailsapp"
+    _write(root, "grails-app/services/au/org/ala/Thing.groovy", "class Thing {}\n" * 3000)
+    _write(root, "grails-app/assets/javascripts/tinymce.js", "// vendored\n" * 50000)
+    _write(root, "src/test/groovy/ThingSpec.groovy", 'def "works"() {}\n' * 20)
+
+    res = kc.scan_repo(root)
+    assert res["vendored_loc"] > 49000
+    assert res["own_loc"] < 3100
+    assert res["main_loc"] == res["own_loc"] + res["vendored_loc"]
+    # Rated over its own code, not over TinyMCE.
+    assert res["cases_per_kloc"] == round(20 / (res["own_loc"] / 1000), 2)
+    # Over the whole tree the ratio would be 0.4 — "barely tested".
+    assert round(20 / (res["main_loc"] / 1000), 2) < 1
+    assert res["test_level"] == "moderate"
+
+
+def test_vendored_loc_stays_visible(tmp_path):
+    """The correction must not hide the problem it corrects for: 1.2M lines of
+    unpatchable libraries in the repos is itself the finding."""
+    root = tmp_path / "app"
+    _write(root, "grails-app/assets/javascripts/jquery.js", "x\n" * 900)
+    _write(root, "grails-app/services/S.groovy", "class S {}\n" * 50)
+    res = kc.scan_repo(root)
+    assert res["vendored_loc"] == 901   # trailing newline counts as a line
+    assert res["main_loc"] == 952
+
+
+def test_a_repo_that_is_all_vendored_code_is_unscored(tmp_path):
+    root = tmp_path / "branding"
+    _write(root, "assets/js/bootstrap.js", "x\n" * 5000)
+    res = kc.scan_repo(root)
+    assert res["own_loc"] == 0
+    assert res["test_level"] == "unscored"
+
+
+# ── CI detection names the system ─────────────────────────────────────────────
+
+def test_jenkins_is_detected_as_ci(tmp_path):
+    """GBIF runs Jenkins. Reading only .github/workflows reported its repos as
+    not running tests — the opposite of the truth, and in the one direction
+    that flattered the comparison."""
+    root = tmp_path / "gbifish"
+    _write(root, "Jenkinsfile", "pipeline { stages { stage('test') { steps { sh 'mvn test' } } } }")
+    _write(root, "src/main/java/S.java", "class S {}\n" * 100)
+    res = kc.scan_repo(root)
+    assert res["ci_systems"] == ["jenkins"]
+    assert res["has_ci"] is True
+
+
+def test_several_ci_systems_are_all_reported(tmp_path):
+    root = tmp_path / "both"
+    _write(root, "Jenkinsfile", "pipeline {}")
+    _write(root, ".travis.yml", "language: java")
+    _write(root, ".github/workflows/ci.yml", "jobs: {}")
+    _write(root, "src/main/java/S.java", "class S {}\n" * 100)
+    assert kc.scan_repo(root)["ci_systems"] == ["github-actions", "jenkins", "travis"]
+
+
+def test_no_ci_is_reported_as_none(tmp_path):
+    root = tmp_path / "bare"
+    _write(root, "src/main/java/S.java", "class S {}\n" * 100)
+    res = kc.scan_repo(root)
+    assert res["ci_systems"] == []
+    assert res["has_ci"] is False

@@ -78,3 +78,39 @@ def classify(rel: str, name: str, text: str) -> str:
     if RE_CONTEXT.search(text):
         return "integration"
     return "unit"
+
+
+# ── Vendored third-party assets ───────────────────────────────────────────────
+# Grails apps commit their front-end libraries into the repo: volunteer-portal
+# carries 455k lines of TinyMCE and friends, biocollect 284k. Counting those as
+# production code made volunteer-portal look like the worst-tested component in
+# the manifest (0.34 cases/kLOC) when the figure over its own code is 4.4 — a
+# manager acting on that table would have funded tests for TinyMCE.
+# The indexer blocklist already treats these directories as vendored; this
+# applies the same judgement to the LOC count.
+
+VENDOR_DIRS = {
+    "assets", "javascripts", "js", "vendor", "thirdparty", "third-party",
+    "lib", "libs", "static", "bower_components", "webjars",
+}
+
+VENDOR_NAMES = re.compile(
+    r"(jquery|bootstrap|angular|tinymce|datatables|moment|lodash|underscore"
+    r"|d3|leaflet|select2|openlayers|highcharts|modernizr|require|backbone"
+    r"|knockout|ckeditor|fontawesome)", re.I,
+)
+
+WEB_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx"}
+
+
+def is_vendored(rel: str, name: str, ext: str) -> bool:
+    """True for a third-party library checked into the repo.
+
+    Only web assets qualify: a Java file under a directory called `lib` is
+    still somebody's code, but `grails-app/assets/javascripts/jquery-ui.js`
+    is 18k lines nobody here wrote or can patch.
+    """
+    if ext not in WEB_EXTENSIONS:
+        return False
+    comps = set(rel.split("/")[:-1])
+    return bool(comps & VENDOR_DIRS) or bool(VENDOR_NAMES.search(name)) or ".min." in name

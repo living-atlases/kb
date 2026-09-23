@@ -363,8 +363,9 @@ def list_testing():
 
     Sourced from data/testing.json (written by kb_coverage.py, refreshed by the
     watcher when a repo gets new commits). Maps "org/name" -> counts of unit /
-    integration / e2e test cases, production LOC, detected stack and which
-    coverage tooling the build configures.
+    integration / e2e test cases, the project's own production LOC (third-party
+    libraries committed into the repo are counted separately as vendored_loc),
+    detected stack, CI system, and which coverage tooling the build configures.
 
     This is not line coverage: measuring that needs a full build per repo. It
     answers "is this component tested, and is its coverage measured at all?".
